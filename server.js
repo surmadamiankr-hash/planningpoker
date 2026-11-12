@@ -27,12 +27,29 @@ const DECKS = {
   shirt: { label: 'T-shirt sizes',      cards: ['XS', 'S', 'M', 'L', 'XL', 'XXL', '?', 'coffee'] },
   pow2:  { label: 'Powers of 2',        cards: ['0', '1', '2', '4', '8', '16', '32', '64', '?', 'coffee'] },
 };
-const MAX = { rooms: 2000, players: 60, stories: 300, name: 24, title: 160, body: 32 * 1024, addAtOnce: 60 };
+const EMOTES = ['❤️', '👍', '👏', '😂', '🎉', '🤔', '😮', '🔥'];
+const MAX = { rooms: 2000, players: 60, stories: 300, name: 24, title: 160, body: 32 * 1024, addAtOnce: 60, customCards: 20, cardLength: 4 };
 const ROOM_RE = /^[a-z0-9][a-z0-9-]{1,39}$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
 const clean = (v, max) => typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
-const isEstimate = v => typeof v === 'string' && v !== '?' && v !== 'coffee' && Object.values(DECKS).some(d => d.cards.includes(v));
+const isEstimate = (room, v) => typeof v === 'string' && v !== '?' && v !== 'coffee' &&
+  (room.custom.includes(v) || Object.values(DECKS).some(d => d.cards.includes(v)));
+const cardsOf = room => (room.deck === 'custom' ? room.custom : DECKS[room.deck].cards);
+
+/** Turns what someone typed into a custom deck: short unique labels, or null when there are fewer than two. */
+function cleanCards(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const raw of list) {
+    let v = clean(raw, 12);
+    if (v === '☕' || /^(coffee|break)$/i.test(v)) v = 'coffee';
+    else v = v.slice(0, MAX.cardLength);
+    if (v && !out.includes(v)) out.push(v);
+    if (out.length >= MAX.customCards) break;
+  }
+  return out.length >= 2 ? out : null;
+}
 const playerId = token => crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
 const newId = () => crypto.randomBytes(6).toString('hex');
 
@@ -40,7 +57,11 @@ const newId = () => crypto.randomBytes(6).toString('hex');
 const rooms = new Map();
 
 function makeRoom(id) {
-  return { id, deck: 'fib', revealed: false, round: 1, title: '', storyId: null, stories: [], players: new Map(), touched: Date.now(), queued: false };
+  return {
+    id, deck: 'fib', custom: [], revealed: false, round: 1, title: '', storyId: null, stories: [],
+    hostId: null, hostOnly: true,                  // the host is the first person to sit down; by default only they run the round
+    players: new Map(), touched: Date.now(), queued: false,
+  };
 }
 function getRoom(id, create) {
   let room = rooms.get(id);
@@ -50,10 +71,12 @@ function getRoom(id, create) {
 
 function publicState(room) {
   return {
-    id: room.id, deck: room.deck, revealed: room.revealed, round: room.round,
+    id: room.id, deck: room.deck, cards: cardsOf(room), custom: room.custom,
+    revealed: room.revealed, round: room.round,
     title: room.title, storyId: room.storyId, stories: room.stories,
+    hostId: room.hostId, hostOnly: room.hostOnly,
     players: [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, spectator: p.spectator, online: p.conns.size > 0,
+      id: p.id, name: p.name, spectator: p.spectator, online: p.conns.size > 0, smoking: p.smoking,
       voted: p.vote !== null,
       vote: room.revealed ? p.vote : null,          // a vote never leaves the server before the reveal
     })),
@@ -66,6 +89,11 @@ function broadcast(room) {
     const msg = 'event: state\ndata: {"state":' + pub + ',"you":' + JSON.stringify({ id: p.id, vote: p.vote }) + '}\n\n';
     for (const res of p.conns) res.write(msg);
   }
+}
+/** Sends a passing moment (a reaction) to everyone at the table. Nothing is stored. */
+function emit(room, event, data) {
+  const msg = 'event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n';
+  for (const p of room.players.values()) for (const res of p.conns) res.write(msg);
 }
 function queueBroadcast(room) {
   if (room.queued) return;
@@ -84,10 +112,27 @@ function nextPending(room) {
   return order.find(s => s.estimate === null) || null;
 }
 
+// Running the round: these are the host's alone while the table is set to host-only.
+const HOST_ACTIONS = new Set(['reveal', 'again', 'new', 'next', 'deck', 'story.select']);
+
 /** Applies one action. Returns true when the table changed. */
 function apply(room, p, a) {
   const sameRound = a.round === room.round;       // guards against two people pressing the same button at once
+  const isHost = p.id === room.hostId;
+  if (room.hostOnly && !isHost && HOST_ACTIONS.has(a.type)) return false;
   switch (a.type) {
+    case 'host.claim':                             // only when the host's seat is empty
+      if (room.hostId && room.players.has(room.hostId)) return false;
+      room.hostId = p.id;
+      return true;
+    case 'host.pass':
+      if (!isHost || a.to === p.id || !room.players.has(a.to)) return false;
+      room.hostId = a.to;
+      return true;
+    case 'host.only':
+      if (!isHost || typeof a.on !== 'boolean' || a.on === room.hostOnly) return false;
+      room.hostOnly = a.on;
+      return true;
     case 'ping':
       return false;
     case 'profile': {
@@ -99,7 +144,7 @@ function apply(room, p, a) {
     case 'vote':
       if (!sameRound || room.revealed || p.spectator) return false;
       if (a.value === null) p.vote = null;
-      else if (DECKS[room.deck].cards.includes(a.value)) p.vote = a.value;
+      else if (cardsOf(room).includes(a.value)) p.vote = a.value;
       else return false;
       return true;
     case 'reveal':
@@ -124,10 +169,30 @@ function apply(room, p, a) {
       return true;
     }
     case 'deck':
+      if (a.deck === 'custom') {
+        const cards = cleanCards(a.cards);
+        if (!cards) return false;
+        if (room.deck === 'custom' && cards.join('\n') === room.custom.join('\n')) return false;
+        room.custom = cards;
+        room.deck = 'custom';
+        newRound(room);
+        return true;
+      }
       if (!DECKS[a.deck] || a.deck === room.deck) return false;
       room.deck = a.deck;
       newRound(room);
       return true;
+    case 'smoke':
+      if (p.smoking === (a.on === true)) return false;
+      p.smoking = a.on === true;
+      return true;
+    case 'emote': {
+      const now = Date.now();
+      if (!EMOTES.includes(a.emote) || a.to === p.id || !room.players.has(a.to) || now - p.emoted < 200) return false;
+      p.emoted = now;
+      emit(room, 'emote', { from: p.id, to: a.to, emote: a.emote });
+      return false;
+    }
     case 'topic':
       if (room.storyId) return false;
       room.title = clean(a.title, MAX.title);
@@ -151,7 +216,7 @@ function apply(room, p, a) {
     }
     case 'story.estimate': {
       const s = room.stories.find(x => x.id === a.id);
-      if (!s || !(a.estimate === null || isEstimate(a.estimate))) return false;
+      if (!s || !(a.estimate === null || isEstimate(room, a.estimate))) return false;
       s.estimate = a.estimate;
       return true;
     }
@@ -168,15 +233,15 @@ function apply(room, p, a) {
 }
 
 /* ---------- saving story lists ---------- */
-const SAVED_ACTIONS = new Set(['deck', 'topic', 'new', 'next', 'story.add', 'story.select', 'story.estimate', 'story.remove']);
+const SAVED_ACTIONS = new Set(['deck', 'topic', 'new', 'next', 'story.add', 'story.select', 'story.estimate', 'story.remove', 'host.claim', 'host.pass', 'host.only']);
 const DATA_FILE = DATA_DIR ? path.join(DATA_DIR, 'rooms.json') : null;
 let saveTimer = null, saveWarned = false;
 
 function snapshot() {
   const out = [];
   for (const r of rooms.values()) {
-    if (!r.stories.length && r.deck === 'fib') continue;       // nothing worth keeping
-    out.push({ id: r.id, deck: r.deck, title: r.title, storyId: r.storyId, stories: r.stories, touched: r.touched });
+    if (!r.stories.length && r.deck === 'fib' && !r.custom.length && r.hostOnly) continue;       // nothing worth keeping
+    out.push({ id: r.id, deck: r.deck, custom: r.custom, title: r.title, storyId: r.storyId, stories: r.stories, hostId: r.hostId, hostOnly: r.hostOnly, touched: r.touched });
   }
   return JSON.stringify(out);
 }
@@ -202,12 +267,15 @@ function load() {
   for (const r of list.slice(0, MAX.rooms)) {
     if (!r || !ROOM_RE.test(r.id)) continue;
     const room = makeRoom(r.id);
-    if (DECKS[r.deck]) room.deck = r.deck;
+    room.custom = cleanCards(r.custom) || [];
+    if (DECKS[r.deck] || (r.deck === 'custom' && room.custom.length)) room.deck = r.deck;
     room.stories = (Array.isArray(r.stories) ? r.stories : []).slice(0, MAX.stories)
-      .map(s => ({ id: clean(s && s.id, 24), title: clean(s && s.title, MAX.title), estimate: s && isEstimate(s.estimate) ? s.estimate : null }))
+      .map(s => ({ id: clean(s && s.id, 24), title: clean(s && s.title, MAX.title), estimate: s && isEstimate(room, s.estimate) ? s.estimate : null }))
       .filter(s => s.id && s.title);
     room.storyId = room.stories.some(s => s.id === r.storyId) ? r.storyId : null;
     room.title = clean(r.title, MAX.title);
+    room.hostId = typeof r.hostId === 'string' && /^[0-9a-f]{16}$/.test(r.hostId) ? r.hostId : null;
+    room.hostOnly = r.hostOnly !== false;
     room.touched = Number(r.touched) || Date.now();
     rooms.set(room.id, room);
   }
@@ -266,8 +334,9 @@ function handleEvents(req, res, roomId, query) {
   let p = room.players.get(id);
   if (!p) {
     if (room.players.size >= MAX.players) return reply(res, 429, 'Table is full');
-    p = { id, name: clean(query.get('name'), MAX.name) || 'Guest', spectator: query.get('spec') === '1', vote: null, conns: new Set(), seen: Date.now(), goneTimer: null };
+    p = { id, name: clean(query.get('name'), MAX.name) || 'Guest', spectator: query.get('spec') === '1', vote: null, smoking: false, emoted: 0, conns: new Set(), seen: Date.now(), goneTimer: null };
     room.players.set(id, p);
+    if (!room.hostId) room.hostId = id;            // first to sit down hosts the table
   }
   if (p.conns.size >= 8) return reply(res, 429, 'Too many tabs');
   clearTimeout(p.goneTimer);
@@ -282,7 +351,7 @@ function handleEvents(req, res, roomId, query) {
     'X-Accel-Buffering': 'no',                     // tells nginx not to buffer the stream
   });
   if (res.socket) res.socket.setNoDelay(true);
-  res.write('retry: 2000\n\nevent: hello\ndata: ' + JSON.stringify({ decks: DECKS, you: id }) + '\n\n');
+  res.write('retry: 2000\n\nevent: hello\ndata: ' + JSON.stringify({ decks: DECKS, emotes: EMOTES, you: id }) + '\n\n');
   p.conns.add(res);
   res.on('close', () => {                          // the browser tab closed or the network dropped
     p.conns.delete(res);

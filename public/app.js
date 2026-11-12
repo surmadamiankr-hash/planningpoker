@@ -6,13 +6,15 @@ const CUP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-w
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const clean = (v, max) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '';
-const num = v => v === '½' ? 0.5 : (/^\d+$/.test(v) ? Number(v) : null);
+const CIG = '<svg class="cig" viewBox="0 0 48 44" aria-hidden="true"><circle class="puff p1" cx="41" cy="25" r="4"/><circle class="puff p2" cx="41" cy="25" r="5"/><circle class="puff p3" cx="41" cy="25" r="3.5"/><g transform="rotate(-18 24 34)"><rect x="4" y="30" width="12" height="7" rx="1.5" fill="#D9893B"/><rect x="16" y="30" width="22" height="7" fill="#F4F1E8"/><rect class="ember" x="38" y="30" width="5" height="7" rx="1.5" fill="#E2482D"/></g></svg>';
+const num = v => v === '½' ? 0.5 : (/^\d+(\.\d+)?$/.test(v) ? Number(v) : null);
 const isReal = v => v !== '?' && v !== 'coffee';
 const fmt = n => { const r = Math.round(n * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
 const spoken = v => v === 'coffee' ? 'a break' : v === '?' ? 'not sure' : v;
 function setFace(node, v) {
   if (node.dataset.v === v) return;
   node.dataset.v = v;
+  node.dataset.long = v !== 'coffee' && v.length >= 4 ? '1' : '0';
   if (v === 'coffee') node.innerHTML = CUP; else node.textContent = v;
 }
 const store = {
@@ -80,7 +82,13 @@ let es = null, retry = 0, retryTimer = 0;
 const local = { vote: undefined, round: 0 };     // my pick, shown before the server confirms it
 
 const api = part => 'api/rooms/' + roomId + '/' + part;
-const cards = () => (decks && state && decks[state.deck] ? decks[state.deck].cards : []);
+const cards = () => (state && Array.isArray(state.cards) ? state.cards : []);
+let editingDeck = false;
+let emoteTarget = null, emoteTimer = 0;
+// the host is the first person at the table; while the table is host-only, they alone reveal and start rounds
+const isHost = () => !!(state && you && state.hostId === you.id);
+const hostPlayer = () => (state ? state.players.find(p => p.id === state.hostId) || null : null);
+const canRun = () => !!state && (!state.hostOnly || isHost());
 const myVote = () => (local.vote !== undefined && state && local.round === state.round ? local.vote : (you ? you.vote : null));
 
 function send(action, quiet) {
@@ -105,10 +113,17 @@ function connect() {
   const sentName = name, sentSpec = spec;
   es = new EventSource(api('events') + '?' + q);
   es.addEventListener('hello', e => {
-    try { decks = JSON.parse(e.data).decks; } catch (err) { return; }
+    let hello;
+    try { hello = JSON.parse(e.data); } catch (err) { return; }
+    decks = hello.decks;
     const sel = $('deck');
     sel.replaceChildren();
     for (const [id, d] of Object.entries(decks)) { const o = el('option', null, d.label); o.value = id; sel.append(o); }
+    const custom = el('option', null, 'Custom deck'); custom.value = 'custom'; sel.append(custom);
+    const pop = $('emotes');
+    pop.replaceChildren();
+    for (const m of hello.emotes || []) { const b = el('button', null, m); b.type = 'button'; b.dataset.emote = m; pop.append(b); }
+    const pass = el('button', 'emotes-host', 'Make host'); pass.type = 'button'; pass.dataset.host = '1'; pass.hidden = true; pop.append(pass);
     // the stream may have reconnected with an old name: bring the server up to date
     if (name !== sentName || spec !== sentSpec) send({ type: 'profile', name, spectator: spec }, true);
   });
@@ -119,6 +134,9 @@ function connect() {
     net = 'live'; everLive = true; retry = 0;
     if (local.vote !== undefined && (local.round !== state.round || you.vote === local.vote)) local.vote = undefined;
     render();
+  });
+  es.addEventListener('emote', e => {
+    try { fly(JSON.parse(e.data)); } catch (err) {}
   });
   es.onerror = () => {
     net = everLive ? 'reconnecting' : 'connecting';
@@ -135,7 +153,7 @@ function seatList() {
   return state.players.map(p => {
     const isMe = p.id === you.id;
     const val = isMe ? (p.spectator ? null : myVote()) : p.vote;
-    return { key: p.id, name: p.name, isMe, spec: p.spectator, online: p.online, val, voted: isMe ? val != null : p.voted };
+    return { key: p.id, name: p.name, isMe, spec: p.spectator, online: p.online, smoking: p.smoking === true, host: p.id === state.hostId, val, voted: isMe ? val != null : p.voted };
   });
 }
 
@@ -181,7 +199,7 @@ function render() {
   if (!state || !decks) return;
   const seats = seatList();
   const t = tally(seats);
-  const w = seats.filter(s => s.spec).map(s => s.isMe ? 'you' : s.name);
+  const w = seats.filter(s => s.spec).map(s => (s.isMe ? 'you' : s.name) + (s.host ? ' (host)' : '') + (s.smoking ? ' (smoke break)' : ''));
   $('watchers').hidden = !w.length;
   if (w.length) $('watchers').textContent = 'Watching: ' + w.join(', ');
   renderTopic();
@@ -189,8 +207,19 @@ function render() {
   renderConsole(seats, t);
   renderTray(t);
   renderStories();
+  const run = canRun();
+  if (editingDeck && !run) closeDeckEditor();
   const sel = $('deck');
-  if (document.activeElement !== sel && sel.value !== state.deck) sel.value = state.deck;
+  if (document.activeElement !== sel && !editingDeck && sel.value !== state.deck) sel.value = state.deck;
+  sel.disabled = !run;
+  sel.title = run ? '' : 'Only the host can change the deck';
+  $('deck-edit').hidden = state.deck !== 'custom' || editingDeck || !run;
+  $('host-only-wrap').hidden = !isHost();
+  if ($('host-only').checked !== state.hostOnly) $('host-only').checked = state.hostOnly;
+  $('host-claim').hidden = hostPlayer() !== null;
+  const mine = seats.find(s => s.isMe);
+  $('smoke').setAttribute('aria-pressed', String(!!(mine && mine.smoking)));
+  if (emoteTarget && !seatEls.has(emoteTarget)) closeEmotes();
 }
 
 function renderTopic() {
@@ -212,10 +241,10 @@ function makeSeat() {
   const card = el('div', 'pcard'), inner = el('div', 'pcard-in'), face = el('div', 'pcard-face');
   inner.append(el('div', 'pcard-back'), face);
   card.append(inner);
-  const label = el('div', 'seat-name'), nm = el('span'), youTag = el('span', 'seat-you', 'you');
-  label.append(nm, youTag);
+  const label = el('div', 'seat-name'), nm = el('span'), youTag = el('span', 'seat-you', 'you'), hostTag = el('span', 'seat-host', 'host');
+  label.append(nm, youTag, hostTag);
   root.append(card, label);
-  return { root, face, nm, youTag };
+  return { root, card, face, nm, youTag, hostTag, cig: null };
 }
 function renderSeats(seats, t) {
   const box = $('seats');
@@ -236,9 +265,16 @@ function renderSeats(seats, t) {
     e.root.classList.toggle('is-up', up);
     e.root.classList.toggle('is-out', state.revealed && !s.voted);
     e.root.classList.toggle('is-away', !s.online);
+    e.root.classList.toggle('is-other', !s.isMe);
+    e.root.dataset.id = s.key;
+    if (s.isMe) { e.root.removeAttribute('tabindex'); e.root.removeAttribute('role'); e.root.removeAttribute('title'); }
+    else { e.root.tabIndex = 0; e.root.setAttribute('role', 'button'); e.root.title = 'Send ' + s.name + ' a reaction'; }
+    if (s.smoking && !e.cig) { e.card.insertAdjacentHTML('beforeend', CIG); e.cig = e.card.lastElementChild; }
+    else if (!s.smoking && e.cig) { e.cig.remove(); e.cig = null; }
     if (e.nm.textContent !== s.name) e.nm.textContent = s.name;
     e.youTag.hidden = !s.isMe;
-    e.root.setAttribute('aria-label', s.name + (up ? ' voted ' + spoken(s.val) : s.voted ? ' has voted' : ' has not voted'));
+    e.hostTag.hidden = !s.host;
+    e.root.setAttribute('aria-label', s.name + (s.host ? ' (host)' : '') + (up ? ' voted ' + spoken(s.val) : s.voted ? ' has voted' : ' has not voted') + (s.smoking ? ', on a smoke break' : '') + (s.isMe ? '' : '. Send a reaction'));
   });
   for (const [k, e] of seatEls) if (!seen.has(k)) { e.root.remove(); seatEls.delete(k); }
   $('table').classList.toggle('is-consensus', state.revealed && t.real >= 2 && t.share === 1);
@@ -251,7 +287,11 @@ function renderConsole(seats, t) {
   const next = state.storyId ? nextPending() : null;
   const alone = seats.length === 1;
   const head = !state.revealed ? '' : t.avg != null ? 'a' + fmt(t.avg) : t.top ? 't' + t.top.val : 'n';
-  const sig = [state.revealed, votedN, players.length, spec, next ? next.id : '', alone, head].join('|');
+  const run = canRun(), host = hostPlayer();
+  const waitFor = host
+    ? (state.revealed ? host.name + ' starts the next round.' : 'Only ' + host.name + ' can reveal the cards.')
+    : 'The host has left the table.';
+  const sig = [state.revealed, votedN, players.length, spec, next ? next.id : '', alone, head, run, host ? host.name : ''].join('|');
   if (sig === consoleSig) return;
   consoleSig = sig;
   const box = $('console');
@@ -263,9 +303,15 @@ function renderConsole(seats, t) {
     else if (votedN === 0) msg = spec ? 'Waiting for votes' : 'Pick a card to vote';
     else if (votedN === players.length) msg = players.length === 1 ? 'Your card is down' : 'Everyone has voted';
     else msg = votedN + ' of ' + players.length + ' have voted';
-    const reveal = button('btn-gold', 'Reveal cards', 'reveal');
-    reveal.disabled = votedN === 0;
-    box.append(el('p', 'console-msg', msg), reveal);
+    box.append(el('p', 'console-msg', msg));
+    if (run) {
+      const reveal = button('btn-gold', 'Reveal cards', 'reveal');
+      reveal.disabled = votedN === 0;
+      box.append(reveal);
+    } else {
+      box.append(el('p', 'console-hint', waitFor));
+      if (!host) box.append(button('btn-felt', 'Become host', 'host.claim'));
+    }
     if (alone) box.append(el('p', 'console-hint', 'Only you so far. Copy the invite link and send it to your team.'));
     return;
   }
@@ -273,9 +319,15 @@ function renderConsole(seats, t) {
   if (t.avg != null) h.append(el('span', 'headline-k', 'Average'), el('span', 'headline-v', fmt(t.avg)));
   else if (t.top) { const v = el('span', 'headline-v'); setFace(v, t.top.val); h.append(el('span', 'headline-k', 'Most picked'), v); }
   else h.append(el('span', 'console-msg', 'No estimates this round'));
-  const row = el('div', 'console-row');
-  row.append(next ? button('btn-gold', 'Next story', 'next') : button('btn-gold', 'New round', 'new'), button('btn-felt', 'Vote again', 'again'));
-  box.append(h, row);
+  box.append(h);
+  if (run) {
+    const row = el('div', 'console-row');
+    row.append(next ? button('btn-gold', 'Next story', 'next') : button('btn-gold', 'New round', 'new'), button('btn-felt', 'Vote again', 'again'));
+    box.append(row);
+  } else {
+    box.append(el('p', 'console-hint', waitFor));
+    if (!host) box.append(button('btn-felt', 'Become host', 'host.claim'));
+  }
 }
 
 let traySig = '';
@@ -358,7 +410,8 @@ function renderTray(t) {
 let storiesSig = '';
 function renderStories() {
   const stories = state.stories;
-  const sig = JSON.stringify([stories, state.storyId]);
+  const run = canRun();
+  const sig = JSON.stringify([stories, state.storyId, run]);
   if (sig === storiesSig) return;
   storiesSig = sig;
   const rows = stories.map((s, i) => {
@@ -366,7 +419,7 @@ function renderStories() {
     const right = el('span', 'story-right');
     if (s.estimate != null) { const b = el('span', 'est'); setFace(b, s.estimate); right.append(b); }
     if (s.id === state.storyId) right.append(el('span', 'now', 'Voting'));
-    else { const b = el('button', 'link', s.estimate != null ? 'Re-vote' : 'Vote'); b.type = 'button'; b.dataset.act = 'vote'; b.dataset.id = s.id; right.append(b); }
+    else if (run) { const b = el('button', 'link', s.estimate != null ? 'Re-vote' : 'Vote'); b.type = 'button'; b.dataset.act = 'vote'; b.dataset.id = s.id; right.append(b); }
     const x = el('button', 'x', '✕'); x.type = 'button'; x.dataset.act = 'rm'; x.dataset.id = s.id; x.setAttribute('aria-label', 'Remove ' + s.title);
     right.append(x);
     li.append(el('span', 'story-n', String(i + 1)), el('span', 'story-title', s.title), right);
@@ -381,6 +434,83 @@ function renderStories() {
   $('story-total').hidden = !nums.length;
   if (nums.length) $('story-sum').textContent = fmt(nums.reduce((a, b) => a + b, 0));
   $('copy').hidden = !stories.length;
+}
+
+/* ---------- reactions ---------- */
+function closeEmotes() {
+  clearTimeout(emoteTimer);
+  emoteTarget = null;
+  $('emotes').hidden = true;
+}
+function openEmotes(id, viaKeyboard) {
+  const seat = seatEls.get(id), who = state && state.players.find(p => p.id === id);
+  if (!seat || !who) return;
+  const pop = $('emotes'), table = $('table');
+  emoteTarget = id;
+  pop.hidden = false;
+  pop.setAttribute('aria-label', 'Send ' + who.name + ' a reaction');
+  const pass = pop.querySelector('.emotes-host');
+  if (pass) pass.hidden = !isHost();
+  // float just above the whole seat so the name stays readable; drop below it only when there is no room
+  const t = table.getBoundingClientRect(), c = seat.root.getBoundingClientRect(), p = pop.getBoundingClientRect();
+  let left = c.left - t.left + c.width / 2 - p.width / 2;
+  left = Math.max(8, Math.min(left, t.width - p.width - 8));
+  let top = c.top - t.top - p.height - 6;
+  if (top < -24) top = c.bottom - t.top + 6;
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.top = Math.round(top) + 'px';
+  if (viaKeyboard && pop.firstElementChild) pop.firstElementChild.focus();
+  clearTimeout(emoteTimer);
+  emoteTimer = setTimeout(closeEmotes, 6000);
+}
+function fly(d) {
+  if (document.hidden || !state || typeof d.emote !== 'string') return;
+  const table = $('table'), to = seatEls.get(d.to);
+  if (!to || table.querySelectorAll('.fly').length > 40) return;
+  const base = table.getBoundingClientRect();
+  const centre = node => { const r = node.getBoundingClientRect(); return { x: r.left - base.left + r.width / 2, y: r.top - base.top + r.height / 2 }; };
+  const end = centre(to.card);
+  const from = seatEls.get(d.from);
+  const start = from ? centre(from.card) : { x: base.width / 2, y: 18 };
+  const at = (pt, scale) => 'translate(' + Math.round(pt.x - 15) + 'px,' + Math.round(pt.y - 15) + 'px) scale(' + scale + ')';
+  const node = el('span', 'fly', d.emote.slice(0, 8));
+  node.style.transform = at(start, 0.7);
+  table.append(node);
+  const land = () => {
+    to.root.classList.remove('is-hit');
+    void to.root.offsetWidth;
+    to.root.classList.add('is-hit');
+    const fade = node.animate(
+      [{ transform: at(end, 1), opacity: 1 }, { transform: at({ x: end.x, y: end.y - 36 }, 2), opacity: 0 }],
+      { duration: 750, easing: 'ease-out', fill: 'forwards' });
+    fade.onfinish = () => node.remove();
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { node.style.transform = at(end, 1); land(); }
+  else {
+    const mid = { x: (start.x + end.x) / 2 + (Math.random() * 40 - 20), y: Math.min(start.y, end.y) - 48 };
+    const flight = node.animate(
+      [{ transform: at(start, 0.7) }, { transform: at(mid, 1.3), offset: 0.55 }, { transform: at(end, 1) }],
+      { duration: 620, easing: 'ease-in-out', fill: 'forwards' });
+    flight.onfinish = land;
+  }
+  setTimeout(() => node.remove(), 4000);
+}
+
+/* ---------- custom deck ---------- */
+function openDeckEditor() {
+  if (!state) return;
+  editingDeck = true;
+  const source = state.custom && state.custom.length ? state.custom : cards();
+  $('deck-values').value = source.map(v => v === 'coffee' ? '☕' : v).join(', ');
+  $('deck-editor').hidden = false;
+  $('deck').value = 'custom';
+  $('deck-edit').hidden = true;
+  $('deck-values').focus();
+}
+function closeDeckEditor() {
+  editingDeck = false;
+  $('deck-editor').hidden = true;
+  if (state) { $('deck').value = state.deck; $('deck-edit').hidden = state.deck !== 'custom'; }
 }
 
 function resultsText() {
@@ -414,7 +544,56 @@ function bind() {
     render();
   });
 
-  $('deck').addEventListener('change', e => { if (state && e.target.value !== state.deck) send({ type: 'deck', deck: e.target.value }); });
+  $('deck').addEventListener('change', e => {
+    if (!state) return;
+    if (e.target.value === 'custom') { openDeckEditor(); return; }
+    if (editingDeck) closeDeckEditor();
+    if (e.target.value !== state.deck) send({ type: 'deck', deck: e.target.value });
+  });
+  $('deck-edit').addEventListener('click', openDeckEditor);
+  $('deck-cancel').addEventListener('click', closeDeckEditor);
+  $('deck-editor').addEventListener('submit', async e => {
+    e.preventDefault();
+    const values = [...new Set($('deck-values').value.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean))];
+    if (values.length < 2) { toast('Add at least two different values.'); return; }
+    const ok = await send({ type: 'deck', deck: 'custom', cards: values });
+    if (ok) closeDeckEditor();
+  });
+
+  $('host-only').addEventListener('change', e => { send({ type: 'host.only', on: e.target.checked }); });
+  $('host-claim').addEventListener('click', () => { send({ type: 'host.claim' }); });
+
+  $('smoke').addEventListener('click', () => {
+    if (!state || !you) return;
+    const mine = state.players.find(p => p.id === you.id);
+    send({ type: 'smoke', on: !(mine && mine.smoking) });
+  });
+
+  const seatFrom = target => { const s = target.closest('.seat.is-other'); return s ? s.dataset.id : null; };
+  $('seats').addEventListener('click', e => {
+    const id = seatFrom(e.target);
+    if (!id) return;
+    if (emoteTarget === id) closeEmotes(); else openEmotes(id, false);
+  });
+  $('seats').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const id = seatFrom(e.target);
+    if (!id || e.target.closest('button')) return;
+    e.preventDefault();
+    openEmotes(id, true);
+  });
+  $('emotes').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || !emoteTarget) return;
+    if (b.dataset.host) { send({ type: 'host.pass', to: emoteTarget }); closeEmotes(); return; }
+    send({ type: 'emote', to: emoteTarget, emote: b.dataset.emote }, true);
+    clearTimeout(emoteTimer);
+    emoteTimer = setTimeout(closeEmotes, 6000);
+  });
+  document.addEventListener('click', e => {
+    if (emoteTarget && !e.target.closest('#emotes') && !e.target.closest('.seat.is-other')) closeEmotes();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && emoteTarget) closeEmotes(); });
 
   $('invite').addEventListener('click', () => copyText(location.origin + location.pathname + '?room=' + roomId, 'Invite link copied.'));
 

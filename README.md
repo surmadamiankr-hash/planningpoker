@@ -28,13 +28,24 @@ docker compose up -d --build
   upgrade rules are needed on a proxy.
 - A table is created the first time someone opens its link:
   `https://your-host/?room=delivery-team`. Anyone with the link can join,
-  vote, reveal, start rounds and edit the story list.
+  vote and edit the story list.
+- The first person to sit down is the table's host. By default only the host
+  reveals cards, starts rounds, picks the story to vote on and changes the
+  deck. The host can switch off "Only I reveal" to let everyone do it, or
+  hand the role over by clicking a teammate's card and choosing "Make host".
+  If the host leaves, anyone can press "Become host".
+- Decks: four built-in ones (the `DECKS` constant at the top of `server.js`)
+  plus "Custom deck" in the page, where the host types the values for that
+  table. Whole numbers, decimals with a dot and `½` count towards the average.
+- Reactions: click a teammate's card to send them an emoji that everyone sees
+  fly across the table. "Smoke break" shows a lit cigarette at your seat
+  until you switch it off.
 - A vote is held on the server and is not sent to other browsers until
   someone reveals.
 - Each browser keeps a random key in localStorage, so a reload (or a second
   tab) keeps the same seat. A seat is released 15 seconds after its last tab
   closes.
-- Tables live in memory. Story lists, estimates and the chosen deck are also
+- Tables live in memory. Story lists, estimates, the chosen deck and the host are also
   written to `DATA_DIR/rooms.json`, so they survive a restart; votes of a
   round in progress do not. Empty tables are dropped after an hour, tables
   with stories after 30 days without use.

@@ -38,8 +38,17 @@
       </div>
       <div class="controls" id="controls" hidden>
         <label class="field"><span>Your name</span><input id="nick" type="text" maxlength="24" autocomplete="off"></label>
-        <label class="field"><span>Deck</span><select id="deck"></select></label>
+        <div class="field">
+          <label for="deck">Deck</label>
+          <div class="deck-row"><select id="deck"></select><button class="link" type="button" id="deck-edit" hidden>Edit</button></div>
+        </div>
         <label class="switch"><input id="spec" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Just watching</span></label>
+        <label class="switch" id="host-only-wrap" hidden><input id="host-only" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Only I reveal</span></label>
+        <button class="btn btn-plain" type="button" id="host-claim" hidden>Become host</button>
+        <button class="btn btn-plain btn-icon" type="button" id="smoke" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="14" width="5" height="4" rx="1" fill="#D9893B"/><rect x="7" y="14" width="11" height="4" fill="currentColor" opacity="0.55"/><rect x="18" y="14" width="3" height="4" rx="1" fill="#E2482D"/><path d="M19.5 11c0-2 2-2 2-4s-2-2-2-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span>Smoke break</span>
+        </button>
         <button class="btn btn-plain" type="button" id="invite">Copy invite link</button>
       </div>
     </header>
@@ -53,6 +62,15 @@
         <button class="btn btn-gold" type="submit">Join the table</button>
       </form>
     </section>
+
+    <form class="deck-editor" id="deck-editor" hidden>
+      <label class="field"><span>Custom deck values</span><input id="deck-values" type="text" autocomplete="off" placeholder="1, 2, 3, 5, 8, 13, ?, ☕"></label>
+      <p class="deck-hint">Separate values with commas or spaces: up to 20 values of 4 characters each. Use a dot for decimals, and ☕ or the word coffee for a break card. Saving starts a new round for everyone.</p>
+      <div class="deck-actions">
+        <button class="btn btn-gold" type="submit">Use this deck</button>
+        <button class="btn btn-plain" type="button" id="deck-cancel">Cancel</button>
+      </div>
+    </form>
 
     <main class="layout" id="layout" hidden>
       <section class="play" aria-label="Table">
@@ -69,6 +87,7 @@
           <div class="seats" id="seats">
             <div class="console" id="console" aria-live="polite"><p class="console-msg">Connecting to the table</p></div>
           </div>
+          <div class="emotes" id="emotes" role="group" hidden></div>
         </div>
 
         <p class="watchers" id="watchers" hidden></p>
@@ -96,7 +115,7 @@
       </aside>
     </main>
 
-    <p class="foot" id="foot" hidden>Everyone with this link is seated at the table. Votes stay on the server until someone reveals, so nobody can peek.</p>
+    <p class="foot" id="foot" hidden>Everyone with this link is seated at the table. Votes stay on the server until the cards are revealed, so nobody can peek. The first person at a table is its host. Click a teammate's card to send them a reaction.</p>
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
