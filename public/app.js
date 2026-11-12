@@ -6,7 +6,7 @@ const CUP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-w
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const clean = (v, max) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '';
-const CIG = '<svg class="cig" viewBox="0 0 48 44" aria-hidden="true"><circle class="puff p1" cx="41" cy="25" r="4"/><circle class="puff p2" cx="41" cy="25" r="5"/><circle class="puff p3" cx="41" cy="25" r="3.5"/><g transform="rotate(-18 24 34)"><rect x="4" y="30" width="12" height="7" rx="1.5" fill="#D9893B"/><rect class="cig-paper" x="16" y="30" width="22" height="7" fill="#F4F1E8"/><rect class="ember" x="38" y="30" width="5" height="7" rx="1.5" fill="#E2482D"/></g></svg>';
+const CIG = '<svg class="cig" viewBox="0 0 48 44" aria-hidden="true"><circle class="puff p1" cx="41" cy="25" r="4"/><circle class="puff p2" cx="41" cy="25" r="5"/><circle class="puff p3" cx="41" cy="25" r="3.5"/><g transform="rotate(-18 24 34)"><rect x="3" y="30" width="12" height="7" rx="1.5" fill="#D8913E"/><rect x="14.5" y="30" width="1.5" height="7" fill="#C9A227"/><rect class="cig-paper" x="16" y="30" width="22" height="7" fill="#F6F3EA"/><rect class="ember" x="38" y="30" width="2.5" height="7" fill="#E2482D"/><rect class="cig-ash" x="40.5" y="30.5" width="3.5" height="6" rx="1.6" fill="#9A9A96"/><path class="flame" d="M43 31c-4-5 0-8-1-13 6 4 8 9 4 13z" fill="#FFB02E"/></g></svg>';
 const clock = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
 const num = v => v === '½' ? 0.5 : (/^\d+(\.\d+)?$/.test(v) ? Number(v) : null);
 const isReal = v => v !== '?' && v !== 'coffee';
@@ -269,11 +269,10 @@ function makeSeat() {
   const card = el('div', 'pcard'), inner = el('div', 'pcard-in'), face = el('div', 'pcard-face');
   inner.append(el('div', 'pcard-back'), face);
   card.append(inner);
-  const label = el('div', 'seat-name'), nm = el('span'), youTag = el('span', 'seat-you', 'you'), hostTag = el('span', 'seat-host', 'host'), smokeTag = el('span', 'seat-smoke');
-  smokeTag.hidden = true;
-  label.append(nm, youTag, hostTag, smokeTag);
+  const label = el('div', 'seat-name'), nm = el('span'), youTag = el('span', 'seat-you', 'you'), hostTag = el('span', 'seat-host', 'host');
+  label.append(nm, youTag, hostTag);
   root.append(card, label);
-  return { root, card, face, nm, youTag, hostTag, smokeTag, cig: null, smokeEnd: 0 };
+  return { root, card, face, nm, youTag, hostTag, cig: null, smokeEnd: 0 };
 }
 function renderSeats(seats, t) {
   const box = $('seats');
@@ -484,14 +483,13 @@ function tickSmoke() {
   if (view3d) return;                       // the 3D table animates its own cigarettes
   for (const e of seatEls.values()) {
     const left = e.smokeEnd ? Math.max(0, e.smokeEnd - now) : 0;
-    const t = left ? clock(left) : '';
-    if (e.smokeTag.textContent !== t) e.smokeTag.textContent = t;
-    e.smokeTag.hidden = !left;
     if (!e.cig || !left) continue;
+    e.cig.classList.toggle('is-lighting', smokeMs - left < 1900);     // a flame at the tip for the first moments
     const w = 4 + 18 * Math.min(1, left / smokeMs);          // length of paper still to burn
-    const dx = 16 + w + 5 - 24;
+    const dx = 16 + w + 6 - 24;
     e.cig.querySelector('.cig-paper').setAttribute('width', w.toFixed(1));
     e.cig.querySelector('.ember').setAttribute('x', (16 + w).toFixed(1));
+    e.cig.querySelector('.cig-ash').setAttribute('x', (18.5 + w).toFixed(1));
     for (const puff of e.cig.querySelectorAll('.puff')) {     // smoke rises from wherever the tip is now
       puff.setAttribute('cx', (24 + dx * 0.951 - 0.15).toFixed(1));
       puff.setAttribute('cy', (34 - dx * 0.309 - 0.5).toFixed(1));

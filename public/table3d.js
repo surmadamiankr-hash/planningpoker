@@ -148,6 +148,38 @@ function puffTexture() {
     x.fillStyle = g; x.fillRect(0, 0, 64, 64);
   });
 }
+function corkTexture() {          // the speckled filter end of a cigarette
+  return canvasTexture(64, 64, (x) => {
+    x.fillStyle = '#D8913E'; x.fillRect(0, 0, 64, 64);
+    let seed = 11;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let i = 0; i < 120; i += 1) {
+      x.fillStyle = i % 3 ? 'rgba(120,66,18,0.45)' : 'rgba(255,220,160,0.5)';
+      x.fillRect(rnd() * 64, rnd() * 64, 1.5 + rnd() * 3, 1 + rnd() * 2);
+    }
+  });
+}
+function flameTexture() {
+  return canvasTexture(64, 96, (x) => {
+    const g = x.createRadialGradient(32, 64, 2, 32, 58, 36);
+    g.addColorStop(0, 'rgba(255,255,240,1)');
+    g.addColorStop(0.3, 'rgba(255,222,110,0.95)');
+    g.addColorStop(0.7, 'rgba(255,130,30,0.6)');
+    g.addColorStop(1, 'rgba(255,90,0,0)');
+    x.fillStyle = g;
+    x.beginPath(); x.moveTo(32, 3); x.bezierCurveTo(54, 36, 60, 62, 32, 93); x.bezierCurveTo(4, 62, 10, 36, 32, 3); x.fill();
+    const b = x.createRadialGradient(32, 84, 1, 32, 84, 14);
+    b.addColorStop(0, 'rgba(120,170,255,0.9)'); b.addColorStop(1, 'rgba(120,170,255,0)');
+    x.fillStyle = b; x.fillRect(14, 68, 36, 28);
+  });
+}
+function glowTexture() {
+  return canvasTexture(64, 64, (x) => {
+    const g = x.createRadialGradient(32, 32, 1, 32, 32, 31);
+    g.addColorStop(0, 'rgba(255,200,120,1)'); g.addColorStop(0.35, 'rgba(255,110,30,0.7)'); g.addColorStop(1, 'rgba(255,80,0,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  });
+}
 function emojiTexture(emoji) {
   return canvasTexture(128, 128, (x) => {
     x.font = '96px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
@@ -486,38 +518,119 @@ function buildHead(spec, R) {
   return { group: g, eyes };
 }
 
-/* A cigarette that burns down: `left` runs from 1 (just lit) to 0 (finished). */
-function makeCig(puffTex) {
+/* A cigarette: cork filter, gold band, paper that burns back, a glowing ember and a growing ash tip.
+   It points along +z from the mouth end. */
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+function makeCig(textures) {
   const group = new THREE.Group();
-  const filter = part(GEO.cyl, mat('#D9893B'), [0.0058, 0.02, 0.0058], [0, 0, 0.01]);
-  filter.rotation.x = Math.PI / 2;
-  const stick = part(GEO.cyl, mat('#F4F1E8'), [0.0056, 0.05, 0.0056], [0, 0, 0.045]);
-  stick.rotation.x = Math.PI / 2;
-  const ember = part(GEO.sphere, new THREE.MeshStandardMaterial({ color: '#FF6A2B', emissive: '#FF4A1C', emissiveIntensity: 2 }), [0.0064, 0.0064, 0.0064], [0, 0, 0.07]);
-  group.add(filter, stick, ember);
-  const puffs = [];
-  for (let i = 0; i < 5; i += 1) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, depthWrite: false, opacity: 0 }));
+  const r = 0.0066, along = m => { m.rotation.x = Math.PI / 2; return m; };
+  const filter = along(part(GEO.cyl, new THREE.MeshStandardMaterial({ map: textures.cork, roughness: 0.9 }), [r * 1.03, 0.024, r * 1.03], [0, 0, 0.012]));
+  const band = along(part(GEO.cyl, mat('#C9A227', { metalness: 0.6, roughness: 0.35 }), [r * 1.05, 0.0018, r * 1.05], [0, 0, 0.0252]));
+  const paper = along(part(GEO.cyl, mat('#F6F3EA', { roughness: 0.95 }), [r, 0.06, r], [0, 0, 0.056]));
+  const ember = along(part(GEO.cyl, new THREE.MeshStandardMaterial({ color: '#2A0F08', emissive: '#FF5A1F', emissiveIntensity: 0, roughness: 1 }), [r * 1.02, 0.0036, r * 1.02], [0, 0, 0.088]));
+  const ash = along(part(GEO.cyl, mat('#8F8F8A', { roughness: 1 }), [r * 0.93, 0.004, r * 0.93], [0, 0, 0.092]));
+  const ashTip = part(GEO.sphere, mat('#A7A7A2', { roughness: 1 }), [r * 0.93, r * 0.93, r * 0.6], [0, 0, 0.094]);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures.glow, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 }));
+  glow.raycast = () => {};
+  group.add(filter, band, paper, ember, ash, ashTip, glow);
+  const wisps = [];
+  for (let i = 0; i < 6; i += 1) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures.puff, transparent: true, depthWrite: false, opacity: 0 }));
     s.raycast = () => {};
     group.add(s);
-    puffs.push(s);
+    wisps.push(s);
   }
   group.visible = false;
-  return { group, stick, ember, puffs, tip: 0.07 };
+  return { group, paper, ember, ash, ashTip, glow, wisps, tip: 0.094, seed: Math.random() * 9 };
 }
-function burnCig(cig, left, time, size) {
-  const len = 0.012 + 0.05 * left;
-  cig.stick.scale.y = len;
-  cig.stick.position.z = 0.02 + len / 2;
-  cig.tip = 0.02 + len;
-  cig.ember.position.z = cig.tip;
-  cig.puffs.forEach((s, i) => {
-    const life = (time * 0.4 + i / cig.puffs.length) % 1;
-    s.position.set(Math.sin(time * 1.3 + i * 2.1) * 0.01 * size, 0.004 + life * 0.17 * size, cig.tip + life * 0.015);
-    const k = (0.014 + life * 0.05) * size;
+/* `left` runs from 1 (just lit) to 0 (finished); `elapsed` is seconds since it was lit. */
+function burnCig(cig, left, elapsed, time, wisp = 1) {      // wisp < 1 thins the smoke (used for your own cigarette, close to the eye)
+  const lit = smooth(0.7, 1.6, elapsed);                  // nothing glows until the flame has caught
+  const len = 0.008 + 0.054 * left;                       // paper still to burn
+  const end = 0.026 + len;
+  const phase = (time + cig.seed) % 9;                    // every so often the smoker takes a drag
+  const drag = phase < 1.2 ? Math.sin((phase / 1.2) * Math.PI) : 0;
+  const exhale = phase > 1.2 && phase < 3.2 ? Math.sin(((phase - 1.2) / 2) * Math.PI) : 0;
+  const ashLen = (0.0015 + ((time * 0.045 + cig.seed) % 1) * 0.012) * lit;      // grows, then drops off
+  cig.paper.scale.y = len;
+  cig.paper.position.z = 0.026 + len / 2;
+  cig.ember.position.z = end + 0.0018;
+  cig.ember.material.emissiveIntensity = lit * (1.3 + drag * 3.2 + Math.sin(time * 7 + cig.seed) * 0.25);
+  cig.ash.visible = cig.ashTip.visible = lit > 0.4;
+  cig.ash.scale.y = Math.max(0.0005, ashLen);
+  cig.ash.position.z = end + 0.0036 + ashLen / 2;
+  cig.ashTip.position.z = end + 0.0036 + ashLen;
+  cig.tip = end + 0.0036 + ashLen;
+  cig.glow.position.z = end + 0.003;
+  cig.glow.scale.setScalar(0.022 + drag * 0.034);
+  cig.glow.material.opacity = lit * (0.4 + drag * 0.6);
+  cig.wisps.forEach((s, i) => {
+    const life = (time * 0.3 + i / cig.wisps.length) % 1;
+    s.position.set(Math.sin(time * 0.9 + i * 1.7 + life * 4) * 0.014 * (0.3 + life) * wisp, 0.004 + life * 0.22 * wisp, cig.tip + life * 0.012);
+    const k = (0.01 + life * (0.045 + exhale * 0.04)) * wisp;
     s.scale.set(k, k, 1);
-    s.material.opacity = Math.sin(life * Math.PI) * 0.42;
+    s.material.opacity = lit * Math.sin(life * Math.PI) * (0.3 + exhale * 0.3) * (wisp < 1 ? 0.7 : 1);
   });
+}
+
+/* A pocket lighter. Its flame sits at the top; `top` is how far above the base that is. */
+function makeLighter(textures) {
+  const group = new THREE.Group();
+  group.add(part(GEO.box, mat('#D62828', { roughness: 0.3 }), [0.022, 0.05, 0.011], [0, 0.025, 0]));
+  group.add(part(GEO.box, mat('#C9CCD1', { metalness: 0.8, roughness: 0.3 }), [0.022, 0.014, 0.011], [0, 0.057, 0]));
+  const wheel = part(GEO.cyl, mat('#55585E', { metalness: 0.7, roughness: 0.4 }), [0.005, 0.009, 0.005], [0.006, 0.066, 0]);
+  wheel.rotation.x = Math.PI / 2;
+  const flame = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures.flame, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+  flame.center.set(0.5, 0.06);
+  flame.position.set(-0.004, 0.064, 0);
+  flame.raycast = () => {};
+  group.add(wheel, flame);
+  group.visible = false;
+  return { group, flame, top: 0.092 };
+}
+/* The lighting-up moment: the lighter comes up for the first couple of seconds of a smoke break. */
+function lightUp(lighter, elapsed, time) {
+  const up = smooth(0, 0.45, elapsed) * (1 - smooth(1.8, 2.3, elapsed));
+  lighter.group.visible = up > 0.02;
+  const burning = elapsed > 0.5 && elapsed < 1.85;
+  lighter.flame.visible = burning;
+  if (burning) {
+    const flick = 0.85 + Math.sin(time * 31) * 0.1 + Math.sin(time * 17.3) * 0.08;
+    lighter.flame.scale.set(0.02 * flick, 0.036 * flick, 1);
+  }
+  return up;
+}
+
+/* An ashtray for the middle of the table; finished cigarettes end up in it. */
+function makeAshtray() {
+  const group = new THREE.Group();
+  const outline = [[0, 0.007], [0.058, 0.007], [0.07, 0.014], [0.074, 0.032], [0.088, 0.032], [0.092, 0.018], [0.088, 0], [0, 0]].map(pt => new THREE.Vector2(pt[0], pt[1]));
+  const dish = new THREE.Mesh(new THREE.LatheGeometry(outline, 40), mat('#8A4B14', { roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+  const ashes = new THREE.Mesh(new THREE.CircleGeometry(0.056, 28), mat('#77726C', { roughness: 1 }));
+  ashes.rotation.x = -Math.PI / 2;
+  ashes.position.y = 0.0085;
+  group.add(dish, ashes);
+  for (let i = 0; i < 3; i += 1) {         // rests cut into the rim
+    const a = (i / 3) * TAU + 0.5;
+    const rest = part(GEO.cyl, mat('#5E3209', { roughness: 0.3 }), [0.0085, 0.022, 0.0085], [Math.sin(a) * 0.081, 0.033, Math.cos(a) * 0.081]);
+    rest.rotation.set(Math.PI / 2, 0, -a);
+    group.add(rest);
+  }
+  const butts = [];
+  const addButt = () => {
+    if (butts.length >= 9) group.remove(butts.shift());
+    const butt = new THREE.Group();
+    const along = m => { m.rotation.x = Math.PI / 2; return m; };
+    butt.add(along(part(GEO.cyl, mat('#D8913E', { roughness: 0.9 }), [0.0066, 0.022, 0.0066], [0, 0, 0])));
+    butt.add(along(part(GEO.cyl, mat('#EDEAE1', { roughness: 0.95 }), [0.0064, 0.007, 0.0064], [0, 0, 0.0145])));
+    butt.add(part(GEO.sphere, mat('#3B3836', { roughness: 1 }), [0.0062, 0.0062, 0.004], [0, 0, 0.018]));
+    const a = Math.random() * TAU, d = Math.random() * 0.034;
+    butt.position.set(Math.sin(a) * d, 0.0155, Math.cos(a) * d);
+    butt.rotation.set(-0.12, Math.random() * TAU, 0);
+    group.add(butt);
+    butts.push(butt);
+  };
+  return { group, addButt };
 }
 
 function buildAvatar(index, textures, labelText) {
@@ -577,10 +690,13 @@ function buildAvatar(index, textures, labelText) {
   group.add(headPivot);
   const headY = sy + neckLen + R;
 
-  const cig = makeCig(textures.puff);
-  cig.group.position.set(R * 0.2, R * 0.58, R * 0.95);
-  cig.group.rotation.set(0.25, 0.3, 0);
+  const cig = makeCig(textures);
+  cig.group.position.set(R * 0.2, R * 0.58, R * 0.93);
+  cig.group.rotation.set(0.22, 0.3, 0);
+  cig.group.scale.setScalar(1.2);
   headPivot.add(cig.group);
+  const lighter = makeLighter(textures);
+  group.add(lighter.group);
 
   // arms: same thickness along each part, so they read as sleeves and not sticks with knobs
   const sleeve = spec.sleeves === 'none' ? skin : cloth;
@@ -609,26 +725,19 @@ function buildAvatar(index, textures, labelText) {
   fan.rotation.order = 'YXZ';
   group.add(fan);
 
-  // name tag, smoke-break bar and speech bubble keep the same size on screen at any distance
+  // name tag and speech bubble keep the same size on screen at any distance
   const anchorY = headY + R + 0.15 + (spec.hat ? 0.05 : 0);
   const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, sizeAttenuation: false }));
   label.scale.set(0.42, 0.079, 1);
-  label.position.set(0, anchorY, 0);
-  const barBg = new THREE.Sprite(new THREE.SpriteMaterial({ color: '#0B1310', transparent: true, opacity: 0.8, depthWrite: false, sizeAttenuation: false }));
-  barBg.scale.set(0.15, 0.013, 1);
-  barBg.center.set(0.5, -3.6);
-  const barFill = new THREE.Sprite(new THREE.SpriteMaterial({ color: '#E8A93A', depthWrite: false, sizeAttenuation: false }));
-  barFill.scale.set(0.146, 0.009, 1);
-  barFill.center.set(0.5, -5.4);
   const bubble = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false }));
   bubble.center.set(0.5, 0);
   bubble.renderOrder = 8;
-  for (const sp of [label, barBg, barFill, bubble]) { sp.position.set(0, anchorY, 0); sp.raycast = () => {}; group.add(sp); }
-  barBg.visible = false; barFill.visible = false; bubble.visible = false;
+  for (const sp of [label, bubble]) { sp.position.set(0, anchorY, 0); sp.raycast = () => {}; group.add(sp); }
+  bubble.visible = false;
   if (labelText) { label.material.map = labelTexture(labelText, false); }
 
   return {
-    index, group, headPivot, eyes: head.eyes, fan, arms, cig, label, barBg, barFill, bubble, torso, headY, R,
+    index, group, headPivot, eyes: head.eyes, fan, arms, cig, lighter, label, bubble, torso, headY, R,
     depth: b.depth, reach: Math.max(0.3, b.belly * b.depth + 0.105), anchorY,
     look: [0, 0, 0], yaw: 0, pitch: 0, peek: 0, blink: 2 + Math.random() * 4, labelKey: '', angle: 0,
     online: true, smokeEnd: 0, bubbleUntil: 0,
@@ -636,7 +745,7 @@ function buildAvatar(index, textures, labelText) {
 }
 
 /* Moves one character for this frame: head, breathing, blinking, arms and cards, cigarette, speech bubble. */
-const _hand = new THREE.Vector3(), _elbow = new THREE.Vector3();
+const _hand = new THREE.Vector3(), _elbow = new THREE.Vector3(), _tip = new THREE.Vector3();
 function animateAvatar(a, dt, time, revealed, smokeTotal) {
   const asleep = !a.online;
   a.yaw = damp(a.yaw, asleep ? 0 : a.look[0], 10, dt);
@@ -667,16 +776,28 @@ function animateAvatar(a, dt, time, revealed, smokeTotal) {
     arm.hand.lookAt(a.group.localToWorld(_dir.copy(_hand).add(_elbow.subVectors(_hand, _elbow))));
   }
 
-  const left = a.smokeEnd ? clamp((a.smokeEnd - Date.now()) / smokeTotal, 0, 1) : 0;
-  const smoking = left > 0;
+  // smoke break: light up with the right hand, then the cigarette burns down by itself
+  const remaining = a.smokeEnd ? a.smokeEnd - Date.now() : 0;
+  const smoking = remaining > 0;
   a.cig.group.visible = smoking;
-  a.barBg.visible = smoking; a.barFill.visible = smoking;
   if (smoking) {
-    burnCig(a.cig, left, time + a.index, 1);
-    const f = Math.max(0.03, left);
-    a.barFill.scale.x = a.barBg.scale.x * 0.973 * f;
-    a.barFill.center.x = 0.5 / f;       // keeps the left end of the bar fixed while it shrinks
-  }
+    const elapsed = (smokeTotal - remaining) / 1000;
+    burnCig(a.cig, clamp(remaining / smokeTotal, 0, 1), elapsed, time + a.index);
+    const up = lightUp(a.lighter, elapsed, time);
+    if (up > 0.02) {
+      const arm = a.arms[1];
+      a.cig.group.localToWorld(_tip.set(0, 0, a.cig.tip));
+      a.group.worldToLocal(_tip);
+      _hand.copy(arm.hand.position).lerp(_tip.set(_tip.x + 0.004, _tip.y - a.lighter.top - 0.012, _tip.z + 0.004), up);
+      _elbow.addVectors(arm.shoulder, _hand).multiplyScalar(0.5);
+      _elbow.x += 0.09; _elbow.y -= 0.07; _elbow.z -= 0.01;
+      setLimb(arm.upper, arm.shoulder, _elbow, arm.rU);
+      setLimb(arm.lower, _elbow, _hand, arm.rL);
+      arm.elbow.position.copy(_elbow);
+      arm.hand.position.copy(_hand);
+      a.lighter.group.position.set(_hand.x, _hand.y + 0.012, _hand.z);
+    }
+  } else a.lighter.group.visible = false;
 
   if (a.bubble.visible) {
     const remaining = a.bubbleUntil - performance.now();
@@ -721,7 +842,7 @@ function makeCard(faceMat, backMat) {
 
 /* ---------- the scene ---------- */
 function makeTextures() {
-  const t = { puff: puffTexture(), back: backTexture(), blank: faceTexture(null), faces: new Map(), emoji: new Map() };
+  const t = { puff: puffTexture(), cork: corkTexture(), flame: flameTexture(), glow: glowTexture(), back: backTexture(), blank: faceTexture(null), faces: new Map(), emoji: new Map() };
   // card backs glow a little so a hand of cards still reads as cards in the dim room
   t.backMat = new THREE.MeshStandardMaterial({ map: t.back, emissive: '#FFFFFF', emissiveMap: t.back, emissiveIntensity: 0.3, roughness: 0.6, alphaTest: 0.5 });
   // card faces are unlit so the values stay readable whatever the lamp is doing
@@ -813,12 +934,21 @@ export async function createTable3D(opts) {
   const handRig = new THREE.Group();
   camera.add(handRig);
   let handCards = [], handKey = '';
-  const myCig = makeCig(textures.puff);
+  const myCig = makeCig(textures);
   myCig.group.traverse(o => { o.userData.mine = true; });
-  myCig.group.position.set(0.2, -0.15, -0.3);
+  myCig.group.position.set(0.19, -0.15, -0.3);
   myCig.group.rotation.set(0.3, Math.PI + 0.45, 0);       // filter towards me, tip pointing at the table
-  myCig.group.scale.setScalar(1.25);
+  myCig.group.scale.setScalar(1.3);
   camera.add(myCig.group);
+  const myLighter = makeLighter(textures);
+  myLighter.group.traverse(o => { o.userData.mine = true; });
+  myLighter.group.scale.setScalar(1.3);
+  camera.add(myLighter.group);
+
+  const ashtray = makeAshtray();
+  ashtray.group.position.set(0, TABLE_Y, 0);
+  scene.add(ashtray.group);
+  const wasSmoking = new Set();        // to notice when a smoke break ends and a butt goes in the ashtray
 
   function rebuildHand() {
     for (const c of handCards) handRig.remove(c.mesh);
@@ -899,6 +1029,13 @@ export async function createTable3D(opts) {
       order += 1;
     }
     if (!view.canPlay) handUp = false;
+
+    const nowMs = Date.now();
+    for (const p of view.players) {
+      const smoking = (p.smokeEnd || 0) > nowMs;
+      if (!smoking && wasSmoking.has(p.id)) ashtray.addButt();
+      if (smoking) wasSmoking.add(p.id); else wasSmoking.delete(p.id);
+    }
   }
 
   /* ----- pointer: look around, hover, click ----- */
@@ -982,7 +1119,7 @@ export async function createTable3D(opts) {
     if (disposed) return;
     requestAnimationFrame(frame);
     if (document.hidden || !opts.mount.clientWidth) { last = now; return; }
-    const elapsed = (now - last) / 1000;
+    const elapsed = Math.max(0, (now - last) / 1000);     // never negative, even if the clock is adjusted
     const dt = Math.min(0.05, elapsed);
     last = now;
     time += dt;
@@ -1072,9 +1209,18 @@ export async function createTable3D(opts) {
         c.mesh.rotation.z = -a;
       });
     }
-    const myLeft = mySmokeEnd ? clamp((mySmokeEnd - Date.now()) / smokeTotal, 0, 1) : 0;
-    myCig.group.visible = myLeft > 0;
-    if (myLeft > 0) burnCig(myCig, myLeft, time, 1);
+    const myRemaining = mySmokeEnd ? mySmokeEnd - Date.now() : 0;
+    myCig.group.visible = myRemaining > 0;
+    if (myRemaining > 0) {
+      const elapsed = (smokeTotal - myRemaining) / 1000;
+      burnCig(myCig, clamp(myRemaining / smokeTotal, 0, 1), elapsed, time, 0.4);
+      const up = lightUp(myLighter, elapsed, time);
+      if (up > 0.02) {                 // my lighter comes up from below to the tip of my cigarette
+        myCig.group.updateMatrix();
+        v3.set(0, 0, myCig.tip).applyMatrix4(myCig.group.matrix);
+        myLighter.group.position.set(v3.x + 0.02 * (1 - up), v3.y - myLighter.top * 1.3 - 0.012 - (1 - up) * 0.22, v3.z + 0.004);
+      }
+    } else myLighter.group.visible = false;
 
     // reactions in the air
     for (let i = flying.length - 1; i >= 0; i -= 1) {
@@ -1182,8 +1328,8 @@ export async function createCastPreview(mount) {
     const col = i % 6, row = Math.floor(i / 6);      // two rows, the back one on a riser like a team photo
     a.group.position.set((col - 2.5) * 0.8 + (row ? 0.4 : 0), row ? 0.75 : 0, row ? -1.1 : 0.3);
     a.group.rotation.y = (2.5 - col) * 0.05;
-    for (const sp of [a.label, a.barBg, a.barFill]) sp.scale.multiplyScalar(0.45);
-    a.smokeEnd = i === 8 ? Date.now() + 120000 : 0;
+    a.label.scale.multiplyScalar(0.45);
+    a.smokeEnd = i === 8 || i === 0 ? Date.now() + 180000 - (i === 8 ? 60000 : 0) : 0;      // one lighting up, one mid-cigarette
     scene.add(a.group);
     return a;
   });
@@ -1205,7 +1351,7 @@ export async function createCastPreview(mount) {
   let last = performance.now(), time = 0;
   const frame = now => {
     requestAnimationFrame(frame);
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const dt = clamp((now - last) / 1000, 0, 0.05);
     last = now; time += dt;
     const far = Math.max(6.4, 5.6 / Math.min(1, camera.aspect / 1.9));
     camera.position.set(0.2, 2.0, far);

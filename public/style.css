@@ -189,6 +189,10 @@ h1 a { color: inherit; text-decoration: none; }
 .cig .p2 { animation-delay: 0.8s; }
 .cig .p3 { animation-delay: 1.6s; }
 .cig .ember { animation: ember 1.1s ease-in-out infinite alternate; }
+.cig .flame { opacity: 0; transform-box: fill-box; transform-origin: 50% 100%; }
+.cig.is-lighting .flame { opacity: 1; animation: flame 0.16s ease-in-out infinite alternate; }
+.cig.is-lighting .puff { animation: none; opacity: 0; }
+@keyframes flame { from { transform: scale(0.82, 0.88); } to { transform: scale(1.12, 1.18); } }
 @keyframes puff { 0% { opacity: 0; transform: translate(0, 0) scale(0.5); } 15% { opacity: 0.85; } 100% { opacity: 0; transform: translate(-8px, -26px) scale(2.2); } }
 @keyframes ember { from { fill: #B5371F; } to { fill: #FF7A3D; } }
 
@@ -250,7 +254,6 @@ h1 a { color: inherit; text-decoration: none; }
 .bubble { position: absolute; z-index: 4; max-width: 230px; padding: 8px 12px; border-radius: 14px; background: var(--card); color: var(--card-ink); border: 2px solid #17211E; font-size: 14px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; pointer-events: none; box-shadow: 0 10px 20px -10px rgba(0, 0, 0, 0.6); }
 .bubble::after { content: ""; position: absolute; left: var(--tail, 50%); bottom: -8px; width: 12px; height: 12px; margin-left: -6px; background: var(--card); border-right: 2px solid #17211E; border-bottom: 2px solid #17211E; transform: rotate(45deg); }
 .bubble.is-below::after { bottom: auto; top: -8px; border: 0; border-left: 2px solid #17211E; border-top: 2px solid #17211E; }
-.seat-smoke { display: block; margin-top: 2px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--felt-muted); }
 #smoke-label { font-variant-numeric: tabular-nums; }
 
 /* ---- story sheet ---- */

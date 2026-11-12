@@ -52,8 +52,10 @@ docker compose up -d --build
   table. Whole numbers, decimals with a dot and `½` count towards the average.
 - Reactions: click a teammate's card to send them an emoji that everyone sees
   fly across the table.
-- Smoke break: three minutes (`SMOKE_MS`). The cigarette burns down and a
-  countdown shows at your seat; it ends by itself, or click again to stop.
+- Smoke break: three minutes (`SMOKE_MS`). You light up with a lighter, the
+  cigarette burns down with a growing ash tip, and it ends by itself (or
+  click again to stop). Only your own button shows the time left. In 3D,
+  finished cigarettes end up in the ashtray in the middle of the table.
 - Chat: messages appear in the chat panel and as a speech bubble next to
   whoever said them. Nothing is stored.
 - A vote is held on the server and is not sent to other browsers until
