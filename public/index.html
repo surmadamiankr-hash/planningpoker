@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Planning Poker</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- Start page: shown when the address has no ?room= -->
+  <section class="landing" id="landing" hidden>
+    <div class="table landing-table">
+      <div class="landing-in">
+        <div class="fan" aria-hidden="true">
+          <span class="fan-card">5</span><span class="fan-card">8</span><span class="fan-card">13</span>
+        </div>
+        <h1>Planning Poker</h1>
+        <p class="lede">Open a table, send the link to your team, vote face down and reveal together. No accounts.</p>
+        <form class="open" id="open-form">
+          <label class="field field-felt"><span>Table name (optional)</span><input id="open-name" type="text" maxlength="40" autocomplete="off" placeholder="delivery-team"></label>
+          <button class="btn btn-gold" type="submit">Open a table</button>
+        </form>
+        <p class="landing-hint">A name gives you a link the team can reuse every sprint. Leave it empty for a one-off table.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- A table: shown when the address has ?room=name -->
+  <div class="room" id="room" hidden>
+    <header class="bar">
+      <div class="brand">
+        <h1><a href="./">Planning Poker</a></h1>
+        <span class="pill is-wait" id="status">Connecting</span>
+      </div>
+      <div class="controls" id="controls" hidden>
+        <label class="field"><span>Your name</span><input id="nick" type="text" maxlength="24" autocomplete="off"></label>
+        <label class="field"><span>Deck</span><select id="deck"></select></label>
+        <label class="switch"><input id="spec" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Just watching</span></label>
+        <button class="btn btn-plain" type="button" id="invite">Copy invite link</button>
+      </div>
+    </header>
+
+    <section class="join" id="join" hidden>
+      <h2>Take a seat</h2>
+      <p class="join-room">Table <strong id="join-room"></strong></p>
+      <form class="join-form" id="join-form">
+        <label class="field"><span>Your name</span><input id="join-name" type="text" maxlength="24" autocomplete="name" required></label>
+        <label class="switch"><input id="join-spec" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Just watching</span></label>
+        <button class="btn btn-gold" type="submit">Join the table</button>
+      </form>
+    </section>
+
+    <main class="layout" id="layout" hidden>
+      <section class="play" aria-label="Table">
+        <div class="topic">
+          <label class="eyebrow" for="topic">Now estimating</label>
+          <input id="topic" type="text" maxlength="160" autocomplete="off" placeholder="What are we estimating? (optional)">
+          <div class="topic-story" id="topic-story" hidden>
+            <span class="topic-title" id="topic-title"></span>
+            <span class="topic-tag" id="topic-tag"></span>
+          </div>
+        </div>
+
+        <div class="table" id="table">
+          <div class="seats" id="seats">
+            <div class="console" id="console" aria-live="polite"><p class="console-msg">Connecting to the table</p></div>
+          </div>
+        </div>
+
+        <p class="watchers" id="watchers" hidden></p>
+
+        <section class="tray" id="tray" aria-label="Your card and results"></section>
+      </section>
+
+      <aside class="sheet" aria-label="Stories">
+        <div class="sheet-head">
+          <h2>Stories</h2>
+          <span class="sheet-meta" id="story-meta"></span>
+        </div>
+        <p class="sheet-msg" id="story-msg"></p>
+        <ol class="story-list" id="story-list"></ol>
+        <div class="sheet-total" id="story-total" hidden><span>Total</span><strong id="story-sum"></strong></div>
+        <form class="add" id="add-form">
+          <label for="add-input">Add stories, one per line</label>
+          <textarea id="add-input" rows="3" placeholder="PAY-142 Refund flow&#10;PAY-150 Export to CSV"></textarea>
+          <div class="sheet-actions">
+            <button class="btn btn-plain" type="submit" id="add-btn">Add to list</button>
+            <button class="btn btn-plain" type="button" id="copy" hidden>Copy results</button>
+          </div>
+        </form>
+        <textarea class="copy-out" id="copy-out" readonly hidden aria-label="Text to copy"></textarea>
+      </aside>
+    </main>
+
+    <p class="foot" id="foot" hidden>Everyone with this link is seated at the table. Votes stay on the server until someone reveals, so nobody can peek.</p>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

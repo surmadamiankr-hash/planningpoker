@@ -1,0 +1,13 @@
+services:
+  poker:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - poker-data:/data
+    # environment:
+    #   BASE_PATH: /poker   # only when served under a sub-path
+
+volumes:
+  poker-data:

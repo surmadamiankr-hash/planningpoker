@@ -1,0 +1,13 @@
+{
+  "name": "planning-poker",
+  "version": "1.0.0",
+  "description": "Self-hosted planning poker: open a table, share the link, vote face down, reveal together.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
