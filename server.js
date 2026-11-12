@@ -30,6 +30,8 @@ const DECKS = {
   shirt: { label: 'T-shirt sizes',      cards: ['XS', 'S', 'M', 'L', 'XL', 'XXL', '?', 'coffee'] },
   pow2:  { label: 'Powers of 2',        cards: ['0', '1', '2', '4', '8', '16', '32', '64', '?', 'coffee'] },
 };
+const DEFAULT_DECK = 'bt';
+const SMOKE_MS = Number(process.env.SMOKE_MS) || 3 * 60 * 1000;   // a smoke break lasts three minutes
 const CAST_SIZE = 12;                                        // characters in the 3D cast (public/table3d.js)
 const EMOTES = ['❤️', '👍', '👏', '😂', '🎉', '🤔', '😮', '🔥'];
 const MAX = { rooms: 2000, players: 60, stories: 300, name: 24, title: 160, body: 32 * 1024, addAtOnce: 60, customCards: 20, cardLength: 4 };
@@ -62,7 +64,7 @@ const rooms = new Map();
 
 function makeRoom(id) {
   return {
-    id, deck: 'fib', custom: [], revealed: false, round: 1, title: '', storyId: null, stories: [],
+    id, deck: DEFAULT_DECK, custom: [], revealed: false, round: 1, title: '', storyId: null, stories: [],
     hostId: null, hostOnly: true,                  // the host is the first person to sit down; by default only they run the round
     players: new Map(), touched: Date.now(), queued: false,
   };
@@ -74,13 +76,15 @@ function getRoom(id, create) {
 }
 
 function publicState(room) {
+  const now = Date.now();
   return {
     id: room.id, deck: room.deck, cards: cardsOf(room), custom: room.custom,
     revealed: room.revealed, round: room.round,
     title: room.title, storyId: room.storyId, stories: room.stories,
     hostId: room.hostId, hostOnly: room.hostOnly,
     players: [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, spectator: p.spectator, online: p.conns.size > 0, smoking: p.smoking, avatar: p.avatar,
+      id: p.id, name: p.name, spectator: p.spectator, online: p.conns.size > 0, avatar: p.avatar,
+      smoking: p.smokeEnd > now, smokeLeft: Math.max(0, p.smokeEnd - now),   // time left, so clocks need not agree
       voted: p.vote !== null,
       vote: room.revealed ? p.vote : null,          // a vote never leaves the server before the reveal
     })),
@@ -194,10 +198,24 @@ function apply(room, p, a) {
       room.deck = a.deck;
       newRound(room);
       return true;
-    case 'smoke':
-      if (p.smoking === (a.on === true)) return false;
-      p.smoking = a.on === true;
+    case 'smoke': {
+      const smoking = p.smokeEnd > Date.now();
+      if (smoking === (a.on === true)) return false;
+      clearTimeout(p.smokeTimer);
+      if (a.on === true) {
+        p.smokeEnd = Date.now() + SMOKE_MS;
+        p.smokeTimer = setTimeout(() => { p.smokeEnd = 0; queueBroadcast(room); }, SMOKE_MS + 50);
+        p.smokeTimer.unref();
+      } else p.smokeEnd = 0;
       return true;
+    }
+    case 'chat': {
+      const text = clean(a.text, 140), now = Date.now();
+      if (!text || now - p.chatted < 500) return false;
+      p.chatted = now;
+      emit(room, 'chat', { from: p.id, name: p.name, text });
+      return false;
+    }
     case 'emote': {
       const now = Date.now();
       if (!EMOTES.includes(a.emote) || a.to === p.id || !room.players.has(a.to) || now - p.emoted < 200) return false;
@@ -252,7 +270,7 @@ let saveTimer = null, saveWarned = false;
 function snapshot() {
   const out = [];
   for (const r of rooms.values()) {
-    if (!r.stories.length && r.deck === 'fib' && !r.custom.length && r.hostOnly) continue;       // nothing worth keeping
+    if (!r.stories.length && r.deck === DEFAULT_DECK && !r.custom.length && r.hostOnly) continue;       // nothing worth keeping
     out.push({ id: r.id, deck: r.deck, custom: r.custom, title: r.title, storyId: r.storyId, stories: r.stories, hostId: r.hostId, hostOnly: r.hostOnly, touched: r.touched });
   }
   return JSON.stringify(out);
@@ -332,6 +350,7 @@ function leave(room, p) {
   p.goneTimer = setTimeout(() => {
     if (p.conns.size || room.players.get(p.id) !== p) return;
     room.players.delete(p.id);
+    clearTimeout(p.smokeTimer);
     for (const ws of p.sockets) ws.close();
     queueBroadcast(room);
   }, GRACE_MS);
@@ -349,7 +368,7 @@ function handleEvents(req, res, roomId, query) {
     if (room.players.size >= MAX.players) return reply(res, 429, 'Table is full');
     p = {
       id, name: clean(query.get('name'), MAX.name) || 'Guest', spectator: query.get('spec') === '1',
-      vote: null, smoking: false, emoted: 0, avatar: pickAvatar(room),
+      vote: null, smokeEnd: 0, smokeTimer: null, emoted: 0, chatted: 0, avatar: pickAvatar(room),
       look: [0, 0, 0], lookDirty: false, sockets: new Set(),   // head yaw, head pitch, cards raised (3D view)
       conns: new Set(), seen: Date.now(), goneTimer: null,
     };
@@ -369,7 +388,7 @@ function handleEvents(req, res, roomId, query) {
     'X-Accel-Buffering': 'no',                     // tells nginx not to buffer the stream
   });
   if (res.socket) res.socket.setNoDelay(true);
-  res.write('retry: 2000\n\nevent: hello\ndata: ' + JSON.stringify({ decks: DECKS, emotes: EMOTES, you: id }) + '\n\n');
+  res.write('retry: 2000\n\nevent: hello\ndata: ' + JSON.stringify({ decks: DECKS, emotes: EMOTES, smokeMs: SMOKE_MS, you: id }) + '\n\n');
   p.conns.add(res);
   res.on('close', () => {                          // the browser tab closed or the network dropped
     p.conns.delete(res);

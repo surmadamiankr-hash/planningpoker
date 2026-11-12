@@ -6,7 +6,8 @@ const CUP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-w
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const clean = (v, max) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '';
-const CIG = '<svg class="cig" viewBox="0 0 48 44" aria-hidden="true"><circle class="puff p1" cx="41" cy="25" r="4"/><circle class="puff p2" cx="41" cy="25" r="5"/><circle class="puff p3" cx="41" cy="25" r="3.5"/><g transform="rotate(-18 24 34)"><rect x="4" y="30" width="12" height="7" rx="1.5" fill="#D9893B"/><rect x="16" y="30" width="22" height="7" fill="#F4F1E8"/><rect class="ember" x="38" y="30" width="5" height="7" rx="1.5" fill="#E2482D"/></g></svg>';
+const CIG = '<svg class="cig" viewBox="0 0 48 44" aria-hidden="true"><circle class="puff p1" cx="41" cy="25" r="4"/><circle class="puff p2" cx="41" cy="25" r="5"/><circle class="puff p3" cx="41" cy="25" r="3.5"/><g transform="rotate(-18 24 34)"><rect x="4" y="30" width="12" height="7" rx="1.5" fill="#D9893B"/><rect class="cig-paper" x="16" y="30" width="22" height="7" fill="#F4F1E8"/><rect class="ember" x="38" y="30" width="5" height="7" rx="1.5" fill="#E2482D"/></g></svg>';
+const clock = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
 const num = v => v === '½' ? 0.5 : (/^\d+(\.\d+)?$/.test(v) ? Number(v) : null);
 const isReal = v => v !== '?' && v !== 'coffee';
 const fmt = n => { const r = Math.round(n * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
@@ -92,6 +93,9 @@ const canRun = () => !!state && (!state.hostOnly || isHost());
 // the 3D table (public/table3d.js) is loaded only when someone switches it on
 let view3d = (store.get('pp.view') || (matchMedia('(min-width: 720px)').matches ? '3d' : '2d')) === '3d';
 let scene3d = null, loading3d = false, ws = null, wsTimer = 0;
+// smoke breaks: the server says how long each one has left; this turns that into a local end time
+let smokeMs = 180000;
+const smokeEnds = new Map();
 const myVote = () => (local.vote !== undefined && state && local.round === state.round ? local.vote : (you ? you.vote : null));
 
 function send(action, quiet) {
@@ -119,6 +123,7 @@ function connect() {
     let hello;
     try { hello = JSON.parse(e.data); } catch (err) { return; }
     decks = hello.decks;
+    smokeMs = Number(hello.smokeMs) || 180000;
     const sel = $('deck');
     sel.replaceChildren();
     for (const [id, d] of Object.entries(decks)) { const o = el('option', null, d.label); o.value = id; sel.append(o); }
@@ -136,11 +141,20 @@ function connect() {
     state = d.state; you = d.you;
     net = 'live'; everLive = true; retry = 0;
     if (local.vote !== undefined && (local.round !== state.round || you.vote === local.vote)) local.vote = undefined;
+    const now = Date.now();
+    for (const p of state.players) {
+      if (!p.smoking) { smokeEnds.delete(p.id); continue; }
+      const end = now + (Number(p.smokeLeft) || 0), known = smokeEnds.get(p.id);
+      if (!known || Math.abs(known - end) > 1500) smokeEnds.set(p.id, end);     // ignore network jitter
+    }
     render();
     if (view3d && scene3d && !ws) connectWs();
   });
   es.addEventListener('emote', e => {
     try { fly(JSON.parse(e.data)); } catch (err) {}
+  });
+  es.addEventListener('chat', e => {
+    try { onChat(JSON.parse(e.data)); } catch (err) {}
   });
   es.onerror = () => {
     net = everLive ? 'reconnecting' : 'connecting';
@@ -157,7 +171,7 @@ function seatList() {
   return state.players.map(p => {
     const isMe = p.id === you.id;
     const val = isMe ? (p.spectator ? null : myVote()) : p.vote;
-    return { key: p.id, name: p.name, isMe, spec: p.spectator, online: p.online, smoking: p.smoking === true, host: p.id === state.hostId, avatar: Number(p.avatar) || 0, val, voted: isMe ? val != null : p.voted };
+    return { key: p.id, name: p.name, isMe, spec: p.spectator, online: p.online, smoking: p.smoking === true, smokeEnd: p.smoking ? smokeEnds.get(p.id) || 0 : 0, host: p.id === state.hostId, avatar: Number(p.avatar) || 0, val, voted: isMe ? val != null : p.voted };
   });
 }
 
@@ -211,10 +225,10 @@ function render() {
     const canPlay = !spec && !state.revealed && seats.some(s => s.isMe && !s.spec);
     scene3d.update({
       players: seats.filter(s => !s.spec).map(s => ({
-        id: s.key, name: s.name, avatar: s.avatar, isMe: s.isMe, online: s.online, smoking: s.smoking, host: s.host,
+        id: s.key, name: s.name, avatar: s.avatar, isMe: s.isMe, online: s.online, smokeEnd: s.smokeEnd, host: s.host,
         voted: s.voted, val: s.isMe || state.revealed ? s.val : null,
       })),
-      revealed: state.revealed, cards: cards(), myVote: myVote(), canPlay,
+      revealed: state.revealed, cards: cards(), myVote: myVote(), canPlay, smokeTotal: smokeMs,
     });
     $('stage-hint').hidden = true;
   } else if (!view3d) renderSeats(seats, t);
@@ -231,8 +245,7 @@ function render() {
   $('host-only-wrap').hidden = !isHost();
   if ($('host-only').checked !== state.hostOnly) $('host-only').checked = state.hostOnly;
   $('host-claim').hidden = hostPlayer() !== null;
-  const mine = seats.find(s => s.isMe);
-  $('smoke').setAttribute('aria-pressed', String(!!(mine && mine.smoking)));
+  tickSmoke();
   if (emoteTarget && !state.players.some(p => p.id === emoteTarget && !p.spectator)) closeEmotes();
   if ($('view3d').checked !== view3d) $('view3d').checked = view3d;
 }
@@ -256,10 +269,11 @@ function makeSeat() {
   const card = el('div', 'pcard'), inner = el('div', 'pcard-in'), face = el('div', 'pcard-face');
   inner.append(el('div', 'pcard-back'), face);
   card.append(inner);
-  const label = el('div', 'seat-name'), nm = el('span'), youTag = el('span', 'seat-you', 'you'), hostTag = el('span', 'seat-host', 'host');
-  label.append(nm, youTag, hostTag);
+  const label = el('div', 'seat-name'), nm = el('span'), youTag = el('span', 'seat-you', 'you'), hostTag = el('span', 'seat-host', 'host'), smokeTag = el('span', 'seat-smoke');
+  smokeTag.hidden = true;
+  label.append(nm, youTag, hostTag, smokeTag);
   root.append(card, label);
-  return { root, card, face, nm, youTag, hostTag, cig: null };
+  return { root, card, face, nm, youTag, hostTag, smokeTag, cig: null, smokeEnd: 0 };
 }
 function renderSeats(seats, t) {
   const box = $('seats');
@@ -286,6 +300,7 @@ function renderSeats(seats, t) {
     else { e.root.tabIndex = 0; e.root.setAttribute('role', 'button'); e.root.title = 'Send ' + s.name + ' a reaction'; }
     if (s.smoking && !e.cig) { e.card.insertAdjacentHTML('beforeend', CIG); e.cig = e.card.lastElementChild; }
     else if (!s.smoking && e.cig) { e.cig.remove(); e.cig = null; }
+    e.smokeEnd = s.smoking ? s.smokeEnd : 0;
     if (e.nm.textContent !== s.name) e.nm.textContent = s.name;
     e.youTag.hidden = !s.isMe;
     e.hostTag.hidden = !s.host;
@@ -458,6 +473,63 @@ function renderStories() {
   $('copy').hidden = !stories.length;
 }
 
+/* ---------- smoke break: three minutes, burning down where everyone can see ---------- */
+function tickSmoke() {
+  if (!state || !you) return;
+  const now = Date.now();
+  const myEnd = smokeEnds.get(you.id) || 0, mine = myEnd > now;
+  $('smoke').setAttribute('aria-pressed', String(mine));
+  const text = mine ? 'Smoking ' + clock(myEnd - now) : 'Smoke break';
+  if ($('smoke-label').textContent !== text) $('smoke-label').textContent = text;
+  if (view3d) return;                       // the 3D table animates its own cigarettes
+  for (const e of seatEls.values()) {
+    const left = e.smokeEnd ? Math.max(0, e.smokeEnd - now) : 0;
+    const t = left ? clock(left) : '';
+    if (e.smokeTag.textContent !== t) e.smokeTag.textContent = t;
+    e.smokeTag.hidden = !left;
+    if (!e.cig || !left) continue;
+    const w = 4 + 18 * Math.min(1, left / smokeMs);          // length of paper still to burn
+    const dx = 16 + w + 5 - 24;
+    e.cig.querySelector('.cig-paper').setAttribute('width', w.toFixed(1));
+    e.cig.querySelector('.ember').setAttribute('x', (16 + w).toFixed(1));
+    for (const puff of e.cig.querySelectorAll('.puff')) {     // smoke rises from wherever the tip is now
+      puff.setAttribute('cx', (24 + dx * 0.951 - 0.15).toFixed(1));
+      puff.setAttribute('cy', (34 - dx * 0.309 - 0.5).toFixed(1));
+    }
+  }
+}
+
+/* ---------- chat: a line in the log and a speech bubble by whoever said it ---------- */
+const bubbles = new Map();
+function onChat(d) {
+  if (!state || typeof d.text !== 'string') return;
+  const name = clean(String(d.name || 'Someone'), 24), text = d.text.slice(0, 140);
+  const log = $('chat-log');
+  const li = el('li'), who = el('strong', null, (you && d.from === you.id ? 'You' : name) + ' ');
+  li.append(who, document.createTextNode(text));
+  log.append(li);
+  while (log.children.length > 60) log.firstElementChild.remove();
+  log.scrollTop = log.scrollHeight;
+  $('chat-empty').hidden = true;
+  if (document.hidden) return;
+  if (view3d) { if (scene3d) scene3d.chat(d.from, name, text); return; }
+  const seat = seatEls.get(d.from);
+  if (!seat) return;
+  const old = bubbles.get(d.from);
+  if (old) { clearTimeout(old.timer); old.node.remove(); }
+  const node = el('div', 'bubble', text), table = $('table');
+  table.append(node);
+  const t = table.getBoundingClientRect(), c = seat.root.getBoundingClientRect(), b = node.getBoundingClientRect();
+  let top = c.top - t.top - b.height - 12;
+  if (top < -40) { top = c.bottom - t.top + 12; node.classList.add('is-below'); }
+  node.style.top = Math.round(top) + 'px';
+  const left = Math.max(6, Math.min(c.left - t.left + c.width / 2 - b.width / 2, t.width - b.width - 6));
+  node.style.left = Math.round(left) + 'px';
+  node.style.setProperty('--tail', Math.round(c.left - t.left + c.width / 2 - left) + 'px');
+  const timer = setTimeout(() => { node.remove(); bubbles.delete(d.from); }, Math.min(9000, 3500 + text.length * 60));
+  bubbles.set(d.from, { node, timer });
+}
+
 /* ---------- reactions ---------- */
 function closeEmotes() {
   clearTimeout(emoteTimer);
@@ -551,6 +623,7 @@ function connectWs() {            // head movement travels over its own WebSocke
 }
 function applyView() {
   $('stage').hidden = !view3d;
+  $('stage-hud').hidden = !view3d;
   $('table').hidden = view3d;
   const consoleHome = view3d ? $('stage-hud') : $('seats');
   if ($('console').parentElement !== consoleHome) consoleHome.append($('console'));
@@ -668,8 +741,16 @@ function bind() {
 
   $('smoke').addEventListener('click', () => {
     if (!state || !you) return;
-    const mine = state.players.find(p => p.id === you.id);
-    send({ type: 'smoke', on: !(mine && mine.smoking) });
+    send({ type: 'smoke', on: !((smokeEnds.get(you.id) || 0) > Date.now()) });
+  });
+  setInterval(tickSmoke, 500);
+
+  $('chat-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const input = $('chat-input'), text = clean(input.value, 140);
+    if (!text || !state) return;
+    input.value = '';
+    send({ type: 'chat', text });
   });
 
   const seatFrom = target => { const s = target.closest('.seat.is-other'); return s ? s.dataset.id : null; };

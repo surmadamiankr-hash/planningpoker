@@ -49,7 +49,7 @@
         <button class="btn btn-plain" type="button" id="host-claim" hidden>Become host</button>
         <button class="btn btn-plain btn-icon" type="button" id="smoke" aria-pressed="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="14" width="5" height="4" rx="1" fill="#D9893B"/><rect x="7" y="14" width="11" height="4" fill="currentColor" opacity="0.55"/><rect x="18" y="14" width="3" height="4" rx="1" fill="#E2482D"/><path d="M19.5 11c0-2 2-2 2-4s-2-2-2-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <span>Smoke break</span>
+          <span id="smoke-label">Smoke break</span>
         </button>
         <button class="btn btn-plain" type="button" id="invite">Copy invite link</button>
       </div>
@@ -85,8 +85,8 @@
           </div>
         </div>
 
+        <div class="stage-hud" id="stage-hud" hidden></div>
         <div class="stage" id="stage" hidden>
-          <div class="stage-hud" id="stage-hud"></div>
           <p class="stage-hint" id="stage-hint" hidden></p>
         </div>
 
@@ -102,6 +102,7 @@
         <section class="tray" id="tray" aria-label="Your card and results"></section>
       </section>
 
+      <div class="side">
       <aside class="sheet" aria-label="Stories">
         <div class="sheet-head">
           <h2>Stories</h2>
@@ -120,6 +121,18 @@
         </form>
         <textarea class="copy-out" id="copy-out" readonly hidden aria-label="Text to copy"></textarea>
       </aside>
+
+      <section class="sheet chat" aria-label="Chat">
+        <div class="sheet-head"><h2>Chat</h2></div>
+        <p class="sheet-msg" id="chat-empty">Say something and it shows up next to you at the table.</p>
+        <ol class="chat-log" id="chat-log" role="log" aria-live="polite"></ol>
+        <form class="chat-form" id="chat-form">
+          <label class="sr-only" for="chat-input">Message</label>
+          <input id="chat-input" type="text" maxlength="140" autocomplete="off" placeholder="Say something">
+          <button class="btn btn-plain" type="submit">Send</button>
+        </form>
+      </section>
+      </div>
     </main>
 
     <p class="foot" id="foot" hidden>Everyone with this link is seated at the table. Votes stay on the server until the cards are revealed, so nobody can peek. The first person at a table is its host. Click a teammate's card to send them a reaction.</p>
