@@ -55,7 +55,19 @@ docker compose up -d --build
 - Smoke break: three minutes (`SMOKE_MS`). You light up with a lighter, the
   cigarette burns down with a growing ash tip, and it ends by itself (or
   click again to stop). Only your own button shows the time left. In 3D,
-  finished cigarettes end up in the ashtray in the middle of the table.
+  click the ashtray in the middle of the table to put yours out; the smoker
+  takes the cigarette from the mouth and flicks the end into the ashtray.
+- Animations in 3D (all local to each viewer, nothing extra is sent): players
+  wave when they sit down, push a card forward when they vote, gesture when
+  they chat, flinch when a reaction lands, and react to the result on reveal
+  (cheer on consensus, shrug for the lowest and highest vote, nod otherwise).
+  Between those they scratch their heads, think with a hand on the chin while
+  they have not voted, drum on the table while they wait for others, and
+  stretch. `/cast.html` has a button for each animation.
+- Keyboard: `Space` raises or lowers your cards (3D), arrow keys choose a
+  card, typing a number jumps to that card, `Enter` plays it, `Esc` lowers
+  the cards. `R` reveals, `N` starts the next round, `A` votes again, `S`
+  starts or ends a smoke break, `C` jumps to the chat box.
 - Chat: messages appear in the chat panel and as a speech bubble next to
   whoever said them. Nothing is stored.
 - A vote is held on the server and is not sent to other browsers until

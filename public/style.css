@@ -218,6 +218,12 @@ h1 a { color: inherit; text-decoration: none; }
 .tray { display: grid; gap: 10px; min-height: 120px; align-content: start; }
 .tray h2 { margin: 0; }
 .tray-note { margin: 0; color: var(--muted); max-width: 60ch; }
+.keys { margin: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; color: var(--muted); }
+.keys-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+.keys kbd { display: inline-block; min-width: 20px; padding: 1px 6px; margin-right: 2px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: var(--surface); color: var(--ink); font: 600 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: center; }
+@media (hover: none) { .keys { display: none; } }
+.cast-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.cast-acts .btn { padding: 6px 14px; font-size: 14px; }
 .hand { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 10px; }
 .hcard { width: 60px; aspect-ratio: 5 / 7; padding: 0; border-radius: 9px; border: 1px solid var(--card-edge); background: var(--card); color: var(--card-ink); display: grid; place-items: center; font: 400 44px / 1 var(--font-display); cursor: pointer; box-shadow: 0 8px 14px -10px rgba(0, 0, 0, 0.45); transition: transform 0.15s, box-shadow 0.15s; }
 .hcard:hover { transform: translateY(-4px); }

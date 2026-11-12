@@ -228,7 +228,7 @@ function render() {
         id: s.key, name: s.name, avatar: s.avatar, isMe: s.isMe, online: s.online, smokeEnd: s.smokeEnd, host: s.host,
         voted: s.voted, val: s.isMe || state.revealed ? s.val : null,
       })),
-      revealed: state.revealed, cards: cards(), myVote: myVote(), canPlay, smokeTotal: smokeMs,
+      revealed: state.revealed, round: state.round, cards: cards(), myVote: myVote(), canPlay, smokeTotal: smokeMs,
     });
     $('stage-hint').hidden = true;
   } else if (!view3d) renderSeats(seats, t);
@@ -368,7 +368,7 @@ function renderTray(t) {
   if (!state.revealed && !spec && view3d && scene3d) {
     if (traySig !== 'hand3d') {
       traySig = 'hand3d';
-      tray.replaceChildren(el('p', 'tray-note', 'Move the mouse over the table to look around. Your cards are face down in your hands: click them to look, click a card to play it, and click your played card on the table to take it back.'));
+      tray.replaceChildren(el('p', 'tray-note', 'Move the mouse over the table to look around. Your cards are face down in your hands: click them to look, click a card to play it, and click your played card on the table to take it back. On a smoke break, click the ashtray to put the cigarette out.'));
     }
     return;
   }
@@ -630,6 +630,49 @@ function applyView() {
   $('view3d').checked = view3d;
   traySig = '';
   consoleSig = '';
+  renderKeys();
+}
+
+/* ---------- keyboard shortcuts ---------- */
+const KEYS_3D = [['Space', 'cards up or down'], ['\u2190 \u2192', 'choose a card'], ['Enter', 'play it'], ['0-9', 'jump to a number'], ['Esc', 'cards down']];
+const KEYS_ALL = [['R', 'reveal'], ['N', 'next round'], ['A', 'vote again'], ['S', 'smoke break'], ['C', 'chat']];
+function renderKeys() {
+  const box = $('keys');
+  box.replaceChildren(el('span', 'keys-title', 'Keys'));
+  for (const [key, what] of (view3d ? KEYS_3D : []).concat(KEYS_ALL)) {
+    const item = el('span', 'keys-item');
+    for (const k of key.split(' ')) item.append(el('kbd', null, k));
+    item.append(' ' + what);
+    box.append(item);
+  }
+}
+function toggleSmoke() {
+  if (!state || !you) return;
+  send({ type: 'smoke', on: !((smokeEnds.get(you.id) || 0) > Date.now()) });
+}
+function onKey(e) {
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || !state || !you) return;
+  const t = e.target instanceof Element ? e.target : document.body;
+  if (t.closest('input, textarea, select, [contenteditable]')) return;      // typing, or a control that uses the key itself
+  const onButton = !!t.closest('button, a[href], summary');
+  const table = view3d && scene3d ? scene3d : null;
+  const k = e.key;
+  if (k === ' ' || k === 'Spacebar') { if (!onButton && table && table.key('hand')) e.preventDefault(); return; }
+  if (k === 'Enter') { if (!onButton && table && table.key('play')) e.preventDefault(); return; }
+  if (k === 'ArrowLeft' || k === 'ArrowRight') { if (table && table.key(k === 'ArrowLeft' ? 'left' : 'right')) e.preventDefault(); return; }
+  if (k === 'Escape') { if (table) table.key('down'); return; }
+  if (/^[0-9?]$/.test(k)) { if (table && table.key('type', k)) e.preventDefault(); return; }
+  if (e.repeat || e.shiftKey) return;
+  const letter = k.toLowerCase();
+  if (letter === 's') { toggleSmoke(); return; }
+  if (letter === 'c') { e.preventDefault(); $('chat-input').focus(); return; }
+  if (letter !== 'r' && letter !== 'n' && letter !== 'a') return;
+  if (!canRun()) { const host = hostPlayer(); toast(host ? 'Only ' + host.name + ' can do that at this table.' : 'This table has no host right now.'); return; }
+  if (letter === 'r') {
+    if (!state.revealed && state.players.some(p => !p.spectator && (p.voted || (p.id === you.id && myVote() != null)))) send({ type: 'reveal', round: state.round });
+  } else if (state.revealed) {
+    send({ type: letter === 'a' ? 'again' : state.storyId && nextPending() ? 'next' : 'new', round: state.round });
+  }
 }
 async function start3d() {
   if (scene3d || loading3d) return;
@@ -641,6 +684,7 @@ async function start3d() {
     scene3d = await mod.createTable3D({
       mount: $('stage'), onVote: castVote, onLook: sendLook, onMiss: closeEmotes,
       onPlayer: (id, point) => { if (emoteTarget === id) closeEmotes(); else openEmotes(id, false, point); },
+      onStopSmoking: () => { send({ type: 'smoke', on: false }); },
       onSlow: () => toast('The 3D table is running slowly on this device. Switch off "3D table" for the 2D view.'),
     });
   } catch (e) {
@@ -708,7 +752,19 @@ function bind() {
     render();
   });
 
+  // Space and the arrows are shortcuts at the table, so a control that was clicked with the mouse must not
+  // keep the keyboard focus (focus reached with Tab is left alone).
+  let viaPointer = false;
+  document.addEventListener('pointerdown', () => { viaPointer = true; }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Tab') viaPointer = false; }, true);
+  document.addEventListener('click', e => {
+    const a = document.activeElement;
+    if (e.detail > 0 && a && a.matches('button, input[type="checkbox"]')) a.blur();
+  });
+  document.addEventListener('keydown', onKey);
+
   $('deck').addEventListener('change', e => {
+    if (viaPointer) e.target.blur();
     if (!state) return;
     if (e.target.value === 'custom') { openDeckEditor(); return; }
     if (editingDeck) closeDeckEditor();
@@ -737,10 +793,7 @@ function bind() {
   $('host-only').addEventListener('change', e => { send({ type: 'host.only', on: e.target.checked }); });
   $('host-claim').addEventListener('click', () => { send({ type: 'host.claim' }); });
 
-  $('smoke').addEventListener('click', () => {
-    if (!state || !you) return;
-    send({ type: 'smoke', on: !((smokeEnds.get(you.id) || 0) > Date.now()) });
-  });
+  $('smoke').addEventListener('click', toggleSmoke);
   setInterval(tickSmoke, 500);
 
   $('chat-form').addEventListener('submit', e => {

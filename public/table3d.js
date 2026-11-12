@@ -4,7 +4,7 @@
  * shapes in code, so there are no model files to load.
  *
  * createTable3D({ mount, onVote, onPlayer, onMiss, onLook, onSlow }) resolves to
- * { update(view), looks(map), emote(from, to, emoji), dispose() }.
+ * { update(view), looks(map), emote(from, to, emoji), chat(from, name, text), key(name, arg), dispose() }.
  */
 import * as THREE from './vendor/three.module.min.js';
 
@@ -601,7 +601,17 @@ function lightUp(lighter, elapsed, time) {
   return up;
 }
 
-/* An ashtray for the middle of the table; finished cigarettes end up in it. */
+/* A stubbed-out cigarette end. */
+function makeButt() {
+  const butt = new THREE.Group();
+  const along = m => { m.rotation.x = Math.PI / 2; return m; };
+  butt.add(along(part(GEO.cyl, mat('#D8913E', { roughness: 0.9 }), [0.0066, 0.022, 0.0066], [0, 0, 0])));
+  butt.add(along(part(GEO.cyl, mat('#EDEAE1', { roughness: 0.95 }), [0.0064, 0.007, 0.0064], [0, 0, 0.0145])));
+  butt.add(part(GEO.sphere, mat('#3B3836', { roughness: 1 }), [0.0062, 0.0062, 0.004], [0, 0, 0.018]));
+  return butt;
+}
+
+/* An ashtray for the middle of the table; finished cigarettes end up in it. Click it to put yours out. */
 function makeAshtray() {
   const group = new THREE.Group();
   const outline = [[0, 0.007], [0.058, 0.007], [0.07, 0.014], [0.074, 0.032], [0.088, 0.032], [0.092, 0.018], [0.088, 0], [0, 0]].map(pt => new THREE.Vector2(pt[0], pt[1]));
@@ -616,14 +626,12 @@ function makeAshtray() {
     rest.rotation.set(Math.PI / 2, 0, -a);
     group.add(rest);
   }
+  // an invisible, slightly larger target so the ashtray is easy to click
+  group.add(part(GEO.cyl, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }), [0.12, 0.07, 0.12], [0, 0.035, 0]));
   const butts = [];
   const addButt = () => {
     if (butts.length >= 9) group.remove(butts.shift());
-    const butt = new THREE.Group();
-    const along = m => { m.rotation.x = Math.PI / 2; return m; };
-    butt.add(along(part(GEO.cyl, mat('#D8913E', { roughness: 0.9 }), [0.0066, 0.022, 0.0066], [0, 0, 0])));
-    butt.add(along(part(GEO.cyl, mat('#EDEAE1', { roughness: 0.95 }), [0.0064, 0.007, 0.0064], [0, 0, 0.0145])));
-    butt.add(part(GEO.sphere, mat('#3B3836', { roughness: 1 }), [0.0062, 0.0062, 0.004], [0, 0, 0.018]));
+    const butt = makeButt();
     const a = Math.random() * TAU, d = Math.random() * 0.034;
     butt.position.set(Math.sin(a) * d, 0.0155, Math.cos(a) * d);
     butt.rotation.set(-0.12, Math.random() * TAU, 0);
@@ -665,9 +673,15 @@ function buildAvatar(index, textures, labelText) {
   const torso = new THREE.Mesh(new THREE.LatheGeometry(profile, 40), new THREE.MeshStandardMaterial({ map: torsoTexture(spec, skinColor, yOf), roughness: 0.88 }));
   torso.rotation.y = Math.PI;        // puts the texture seam at the back
   torso.scale.z = b.depth;
-  group.add(torso);
+  // everything above the seat hangs off one pivot at the hips, so the body can lean
+  const waist = new THREE.Group(), inner = new THREE.Group();
+  waist.position.set(0, 0.5, 0);
+  inner.position.set(0, -0.5, 0);
+  waist.add(inner);
+  group.add(waist);
+  inner.add(torso);
   const turtle = outfit === 'turtleneck';
-  group.add(part(GEO.cyl, turtle ? mat(c2) : skin, [turtle ? 0.058 : 0.046, neckLen + 0.05, turtle ? 0.058 : 0.046], [0, sy + neckLen / 2, 0]));
+  inner.add(part(GEO.cyl, turtle ? mat(c2) : skin, [turtle ? 0.058 : 0.046, neckLen + 0.05, turtle ? 0.058 : 0.046], [0, sy + neckLen / 2, 0]));
 
   // legs under the table
   const pants = mat('#2A2C36'), legR = clamp(b.hips * 0.42, 0.05, 0.09);
@@ -687,7 +701,7 @@ function buildAvatar(index, textures, labelText) {
   const head = buildHead(spec, R);
   head.group.position.y = R;
   headPivot.add(head.group);
-  group.add(headPivot);
+  inner.add(headPivot);
   const headY = sy + neckLen + R;
 
   const cig = makeCig(textures);
@@ -696,7 +710,18 @@ function buildAvatar(index, textures, labelText) {
   cig.group.scale.setScalar(1.2);
   headPivot.add(cig.group);
   const lighter = makeLighter(textures);
-  group.add(lighter.group);
+  inner.add(lighter.group);
+  // the stub that is held in the hand for a moment when a smoke break ends
+  const heldCig = new THREE.Group();
+  {
+    const along = m => { m.rotation.x = Math.PI / 2; return m; };
+    heldCig.add(along(part(GEO.cyl, mat('#D8913E', { roughness: 0.9 }), [0.007, 0.024, 0.007], [0, 0, 0])));
+    heldCig.userData.paper = along(part(GEO.cyl, mat('#F6F3EA', { roughness: 0.95 }), [0.0068, 0.012, 0.0068], [0, 0, 0.018]));
+    heldCig.userData.ember = part(GEO.sphere, new THREE.MeshStandardMaterial({ color: '#2A0F08', emissive: '#FF5A1F', emissiveIntensity: 1.6 }), [0.0068, 0.0068, 0.004], [0, 0, 0.025]);
+    heldCig.add(heldCig.userData.paper, heldCig.userData.ember);
+    heldCig.visible = false;
+    inner.add(heldCig);
+  }
 
   // arms: same thickness along each part, so they read as sleeves and not sticks with knobs
   const sleeve = spec.sleeves === 'none' ? skin : cloth;
@@ -708,8 +733,8 @@ function buildAvatar(index, textures, labelText) {
     const hand = new THREE.Group();
     hand.add(part(GEO.sphere, skin, [0.04, 0.033, 0.047], [0, 0, 0.012]), part(GEO.sphere, skin, [0.015, 0.014, 0.024], [side * -0.03, 0.012, 0.022]));
     if (spec.sleeves === 'long') hand.add(part(GEO.cyl, cloth, [b.rL * 1.12, 0.022, b.rL * 1.12], [0, 0, -0.03]).rotateX(Math.PI / 2));
-    group.add(upper, lower, elbow, hand, part(GEO.sphere, sleeve, [b.rU * 1.12, b.rU * 1.12, b.rU * 1.12], [shoulder.x, shoulder.y, shoulder.z]));
-    return { side, upper, lower, elbow, hand, shoulder, rU: b.rU, rL: b.rL };
+    inner.add(upper, lower, elbow, hand, part(GEO.sphere, sleeve, [b.rU * 1.12, b.rU * 1.12, b.rU * 1.12], [shoulder.x, shoulder.y, shoulder.z]));
+    return { side, upper, lower, elbow, hand, shoulder, rU: b.rU, rL: b.rL, target: new THREE.Vector3() };
   });
 
   // the hand of cards
@@ -723,7 +748,7 @@ function buildAvatar(index, textures, labelText) {
     fan.add(c);
   }
   fan.rotation.order = 'YXZ';
-  group.add(fan);
+  inner.add(fan);
 
   // name tag and speech bubble keep the same size on screen at any distance
   const anchorY = headY + R + 0.15 + (spec.hat ? 0.05 : 0);
@@ -737,20 +762,115 @@ function buildAvatar(index, textures, labelText) {
   if (labelText) { label.material.map = labelTexture(labelText, false); }
 
   return {
-    index, group, headPivot, eyes: head.eyes, fan, arms, cig, lighter, label, bubble, torso, headY, R,
+    index, group, waist, inner, headPivot, eyes: head.eyes, fan, arms, cig, lighter, heldCig, label, bubble, torso, headY, R,
+    act: null, idleAt: 6 + Math.random() * 25, wander: [0, 0], wanderAt: 0, lookStamp: 0, voted: false, pendingFlick: false, lit: false, lastLeft: 0.1,
     depth: b.depth, reach: Math.max(0.3, b.belly * b.depth + 0.105), anchorY,
     look: [0, 0, 0], yaw: 0, pitch: 0, peek: 0, blink: 2 + Math.random() * 4, labelKey: '', angle: 0,
     online: true, smokeEnd: 0, bubbleUntil: 0,
   };
 }
 
-/* Moves one character for this frame: head, breathing, blinking, arms and cards, cigarette, speech bubble. */
+/* ---------- character animations ----------
+   One action plays at a time. Each returns a pose for this instant: where the hands go
+   (R is the hand on the cigarette side, L the other), how the head and body move, and
+   whether the cards are put down. Triggers are listed where startAct is called. */
+const env = (u, a = 0.2, b = 0.8) => smooth(0, a, u) * (1 - smooth(b, 1, u));       // ease in, hold, ease out
+const POSE = { R: new THREE.Vector3(), L: new THREE.Vector3(), wr: 0, wl: 0, hp: 0, hy: 0, hr: 0, lean: 0, fanDown: 0, held: false };
+const _m1 = new THREE.Vector3(), _m2 = new THREE.Vector3();
+const ACTS = {
+  scratch: { dur: 2.2, pose(a, u, t, o) {        // scratching the top of the head
+    const e = env(u, 0.22, 0.82);
+    o.wr = e; o.R.set(0.07 + Math.sin(t * 22) * 0.012, a.headY + a.R * 0.9 + Math.cos(t * 22) * 0.008, -0.01);
+    o.hr = -0.12 * e; o.hp = -0.08 * e;
+  } },
+  think: { dur: 2.8, pose(a, u, t, o) {          // hand on the chin
+    const e = env(u, 0.18, 0.85);
+    o.wl = e; o.L.set(-0.035, a.headY - a.R * 1.0, a.R * 0.8);
+    o.hr = 0.1 * e; o.hp = -0.12 * e; o.hy = 0.15 * e;
+  } },
+  tap: { dur: 2.2, pose(a, u, t, o) {            // drumming on the table while waiting
+    const e = env(u, 0.15, 0.85);
+    o.wr = e; o.R.set(0.2, TABLE_Y + 0.035 + Math.abs(Math.sin(u * Math.PI * 5)) * 0.03, a.reach + 0.1);
+  } },
+  stretch: { dur: 2.8, pose(a, u, t, o) {        // arms up, lean back
+    const e = env(u, 0.3, 0.75);
+    o.wr = e; o.wl = e; o.R.set(0.17, a.headY + 0.03, -a.R * 0.95); o.L.set(-0.17, a.headY + 0.03, -a.R * 0.95);
+    o.lean = -0.2 * e; o.hp = 0.3 * e; o.fanDown = e;
+  } },
+  wave: { dur: 1.8, pose(a, u, t, o) {
+    const e = env(u, 0.2, 0.8);
+    o.wr = e; o.R.set(0.26 + Math.sin(t * 11) * 0.06, a.headY + 0.1, 0.06); o.hr = -0.08 * e;
+  } },
+  talk: { dur: 1.8, pose(a, u, t, o) {           // a hand gesture and a bobbing head
+    const e = env(u, 0.15, 0.85);
+    o.wr = e; o.R.set(0.27 + Math.sin(t * 6) * 0.05, TABLE_Y + 0.34 + Math.sin(t * 9) * 0.025, a.reach + 0.06);
+    o.hp = Math.sin(t * 10) * 0.05 * e; o.lean = 0.05 * e;
+  } },
+  recoil: { dur: 0.7, pose(a, u, t, o) { const e = Math.sin(u * Math.PI); o.lean = -0.14 * e; o.hp = 0.2 * e; } },
+  nod: { dur: 1.1, pose(a, u, t, o) { o.hp = -Math.abs(Math.sin(u * Math.PI * 2)) * 0.22; } },
+  cheer: { dur: 1.7, pose(a, u, t, o) {          // both fists in the air
+    const e = env(u, 0.15, 0.8), bounce = Math.abs(Math.sin(u * Math.PI * 3)) * 0.05;
+    o.wr = e; o.wl = e; o.R.set(0.27, a.headY + 0.16 + bounce, 0.04); o.L.set(-0.27, a.headY + 0.16 + bounce, 0.04);
+    o.hp = 0.18 * e; o.fanDown = e;
+  } },
+  shrug: { dur: 1.6, pose(a, u, t, o) {          // palms out, head to one side
+    const e = env(u, 0.25, 0.75);
+    o.wr = e; o.wl = e; o.R.set(0.32, TABLE_Y + 0.17, 0.21); o.L.set(-0.32, TABLE_Y + 0.17, 0.21);
+    o.hr = 0.16 * e; o.hp = 0.08 * e; o.lean = -0.06 * e; o.fanDown = e;
+  } },
+  play: { dur: 0.75, pose(a, u, t, o) {          // pushing a card onto the table
+    const e = Math.sin(u * Math.PI);
+    o.wr = e; o.R.set(0.06, TABLE_Y + 0.045, a.reach + 0.2); o.lean = 0.08 * e;
+  } },
+  stub: { dur: 1.8, pose(a, u, t, o) {           // take the cigarette from the mouth and flick it at the ashtray
+    const take = smooth(0, 0.22, u), out = smooth(0.25, 0.55, u), back = smooth(0.7, 1, u);
+    _m1.set(a.R * 0.2 + 0.03, a.headY - a.R * 0.45, a.R * 0.93 + 0.07);
+    _m2.set(0.1, TABLE_Y + 0.13, a.reach + 0.2 + smooth(0.55, 0.64, u) * 0.07);
+    o.wr = take * (1 - back); o.R.lerpVectors(_m1, _m2, out);
+    o.lean = 0.1 * out * (1 - back);
+    o.held = u > 0.16 && u < 0.62;
+    if (u >= 0.62 && !a.act.fired) { a.act.fired = true; a.pendingFlick = true; }
+  } },
+};
+function startAct(a, name, delay = 0) {
+  if (!a || !ACTS[name]) return;
+  if (a.act && a.act.name === 'stub' && !a.act.fired) return;      // nothing interrupts putting a cigarette out
+  a.act = { name, t0: null, delay, fired: false };
+}
+
+/* Moves one character for this frame: head, breathing, blinking, arms and cards, cigarette, speech bubble.
+   ctx = { revealed, smokeTotal, waiting, roundAge }. */
 const _hand = new THREE.Vector3(), _elbow = new THREE.Vector3(), _tip = new THREE.Vector3();
-function animateAvatar(a, dt, time, revealed, smokeTotal) {
+function animateAvatar(a, dt, time, ctx) {
+  const revealed = ctx.revealed, smokeTotal = ctx.smokeTotal;
+  // which action is playing, and how far along it is
+  const o = POSE;
+  o.wr = 0; o.wl = 0; o.hp = 0; o.hy = 0; o.hr = 0; o.lean = 0; o.fanDown = 0; o.held = false;
+  if (a.act) {
+    if (a.act.t0 === null) a.act.t0 = time + a.act.delay;
+    const u = (time - a.act.t0) / ACTS[a.act.name].dur;
+    if (u >= 1) a.act = null;
+    else if (u >= 0) ACTS[a.act.name].pose(a, u, time, o);
+  } else if (a.online && !revealed && time > a.idleAt) {
+    // idle habits, picked to fit what the player is doing
+    const options = ['scratch', 'scratch', 'stretch'];
+    if (!a.voted && ctx.roundAge > 10) options.push('think', 'think', 'think');
+    if (a.voted && ctx.waiting) options.push('tap', 'tap', 'tap');
+    startAct(a, options[Math.floor(Math.random() * options.length)]);
+    a.idleAt = time + 14 + Math.random() * 30;
+  }
+
+  // head: follows the player's mouse; players who send no head movement look around by themselves
   const asleep = !a.online;
-  a.yaw = damp(a.yaw, asleep ? 0 : a.look[0], 10, dt);
-  a.pitch = damp(a.pitch, asleep ? -0.75 : a.look[1], 10, dt);
-  a.headPivot.rotation.set(0.2 - a.pitch, a.yaw, 0);
+  let lookYaw = a.look[0], lookPitch = a.look[1];
+  if (!a.lookStamp || performance.now() - a.lookStamp > 30000) {
+    if (time > a.wanderAt) { a.wander = [(Math.random() - 0.5) * 1.1, -0.12 + Math.random() * 0.22]; a.wanderAt = time + 2.5 + Math.random() * 5; }
+    lookYaw = a.wander[0]; lookPitch = a.wander[1];
+  }
+  a.yaw = damp(a.yaw, asleep ? 0 : lookYaw, asleep ? 10 : 4, dt);
+  a.pitch = damp(a.pitch, asleep ? -0.75 : lookPitch, asleep ? 10 : 4, dt);
+  a.headPivot.rotation.set(0.2 - a.pitch - o.hp, a.yaw + o.hy, o.hr);
+  a.waist.rotation.x = o.lean;
   a.peek = damp(a.peek, a.look[2] && !revealed ? 1 : 0, 8, dt);
   const breath = Math.sin(time * 1.6 + a.index) * 0.012;
   a.torso.scale.set(1 + breath, 1, a.depth * (1 + breath));
@@ -758,51 +878,72 @@ function animateAvatar(a, dt, time, revealed, smokeTotal) {
   a.eyes.scale.y = a.blink < 0.12 ? 0.1 : 1;
   if (a.blink < 0) a.blink = 2.5 + Math.random() * 4;
 
-  // cards low over the table, raised to the face while the player looks at them
+  // cards low over the table, raised to the face while the player looks at them, laid down for two-handed moves
   const fy = TABLE_Y + 0.165 + a.peek * (a.headY - TABLE_Y - 0.31);
   const fz = a.reach - a.peek * 0.07;
-  a.fan.position.set(0, fy, fz);
-  a.fan.rotation.set(-0.36 + a.peek * 0.26, Math.PI, 0);
+  a.fan.position.set(0, fy + (TABLE_Y + 0.012 - fy) * o.fanDown, fz + 0.05 * o.fanDown);
+  a.fan.rotation.set(-0.36 + a.peek * 0.26 + (Math.PI / 2 + 0.36) * o.fanDown, Math.PI, 0);
   a.fan.visible = !revealed;
+  const resting = revealed || o.fanDown > 0.5;
   for (const arm of a.arms) {
-    if (revealed) _hand.set(arm.side * 0.15, TABLE_Y + 0.04, a.reach + 0.03);
+    if (resting) _hand.set(arm.side * 0.15, TABLE_Y + 0.04, a.reach + 0.03);
     else _hand.set(arm.side * 0.115, fy - 0.03, fz - 0.012);
+    const w = arm.side > 0 ? o.wr : o.wl;
+    if (w > 0) _hand.lerp(arm.side > 0 ? o.R : o.L, w);
+    arm.target.copy(_hand);
+  }
+
+  // smoke break: light up with the cigarette-side hand, then the cigarette burns down by itself
+  const remaining = a.smokeEnd ? a.smokeEnd - Date.now() : 0;
+  const smoking = remaining > 0;
+  if (smoking) a.lit = true;
+  else if (a.lit) {                      // the break just ended: awake players stub it out, sleepers just drop it
+    a.lit = false;
+    if (a.online) startAct(a, 'stub'); else a.pendingFlick = true;
+  }
+  // for the first moment of stubbing out the cigarette is still in the mouth
+  const inMouth = !smoking && !!a.act && a.act.name === 'stub' && (a.act.t0 === null || (time - a.act.t0) / ACTS.stub.dur < 0.16);
+  a.cig.group.visible = smoking || inMouth;
+  let lighterUp = 0;
+  if (inMouth) burnCig(a.cig, a.lastLeft, 60, time + a.index);
+  if (smoking) {
+    const elapsed = (smokeTotal - remaining) / 1000;
+    a.lastLeft = clamp(remaining / smokeTotal, 0, 1);
+    burnCig(a.cig, a.lastLeft, elapsed, time + a.index);
+    lighterUp = lightUp(a.lighter, elapsed, time);
+    if (lighterUp > 0.02) {
+      a.cig.group.localToWorld(_tip.set(0, 0, a.cig.tip));
+      a.inner.worldToLocal(_tip);
+      a.arms[1].target.lerp(_tip.set(_tip.x + 0.004, _tip.y - a.lighter.top - 0.012, _tip.z + 0.004), lighterUp);
+    }
+  } else a.lighter.group.visible = false;
+
+  for (const arm of a.arms) {
+    _hand.copy(arm.target);
     _elbow.addVectors(arm.shoulder, _hand).multiplyScalar(0.5);
-    _elbow.x += arm.side * 0.08; _elbow.y -= 0.09; _elbow.z -= 0.035;
+    const high = clamp((_hand.y - arm.shoulder.y + 0.1) / 0.3, 0, 1);       // elbows swing out when a hand goes up
+    _elbow.x += arm.side * (0.08 + high * 0.06); _elbow.y -= 0.09 - high * 0.05; _elbow.z -= 0.035;
     setLimb(arm.upper, arm.shoulder, _elbow, arm.rU);
     setLimb(arm.lower, _elbow, _hand, arm.rL);
     arm.elbow.position.copy(_elbow);
     arm.hand.position.copy(_hand);
-    arm.hand.lookAt(a.group.localToWorld(_dir.copy(_hand).add(_elbow.subVectors(_hand, _elbow))));
+    arm.hand.lookAt(a.inner.localToWorld(_dir.copy(_hand).add(_elbow.subVectors(_hand, _elbow))));
+  }
+  if (lighterUp > 0.02) a.lighter.group.position.set(a.arms[1].target.x, a.arms[1].target.y + 0.012, a.arms[1].target.z);
+  a.heldCig.visible = o.held;
+  if (o.held) {
+    const len = 0.008 + 0.054 * a.lastLeft;
+    a.heldCig.userData.paper.scale.y = len;
+    a.heldCig.userData.paper.position.z = 0.012 + len / 2;
+    a.heldCig.userData.ember.position.z = 0.013 + len;
+    a.heldCig.position.set(a.arms[1].target.x - 0.01, a.arms[1].target.y + 0.03, a.arms[1].target.z + 0.02);
+    a.heldCig.rotation.set(-0.5, 0.2, 0);
   }
 
-  // smoke break: light up with the right hand, then the cigarette burns down by itself
-  const remaining = a.smokeEnd ? a.smokeEnd - Date.now() : 0;
-  const smoking = remaining > 0;
-  a.cig.group.visible = smoking;
-  if (smoking) {
-    const elapsed = (smokeTotal - remaining) / 1000;
-    burnCig(a.cig, clamp(remaining / smokeTotal, 0, 1), elapsed, time + a.index);
-    const up = lightUp(a.lighter, elapsed, time);
-    if (up > 0.02) {
-      const arm = a.arms[1];
-      a.cig.group.localToWorld(_tip.set(0, 0, a.cig.tip));
-      a.group.worldToLocal(_tip);
-      _hand.copy(arm.hand.position).lerp(_tip.set(_tip.x + 0.004, _tip.y - a.lighter.top - 0.012, _tip.z + 0.004), up);
-      _elbow.addVectors(arm.shoulder, _hand).multiplyScalar(0.5);
-      _elbow.x += 0.09; _elbow.y -= 0.07; _elbow.z -= 0.01;
-      setLimb(arm.upper, arm.shoulder, _elbow, arm.rU);
-      setLimb(arm.lower, _elbow, _hand, arm.rL);
-      arm.elbow.position.copy(_elbow);
-      arm.hand.position.copy(_hand);
-      a.lighter.group.position.set(_hand.x, _hand.y + 0.012, _hand.z);
-    }
-  } else a.lighter.group.visible = false;
-
   if (a.bubble.visible) {
-    const remaining = a.bubbleUntil - performance.now();
-    if (remaining <= 0) { a.bubble.visible = false; a.label.visible = true; }
-    else a.bubble.material.opacity = Math.min(1, remaining / 400);
+    const left = a.bubbleUntil - performance.now();
+    if (left <= 0) { a.bubble.visible = false; a.label.visible = true; }
+    else a.bubble.material.opacity = Math.min(1, left / 400);
   }
   a.label.material.opacity = a.online ? 1 : 0.45;
 }
@@ -929,6 +1070,11 @@ export async function createTable3D(opts) {
   let seatR = 1.2, tableR = 0.84, myHeadY = 1.34, myAngle = 0, mySmokeEnd = 0, smokeTotal = 180000;
   const look = { yaw: 0, pitch: 0, tYaw: 0, tPitch: 0, sent: [9, 9, 9], sentAt: 0 };
   let handUp = false, raise = 0, hover = null, pointer = null, disposed = false;
+  let kb = -1, typed = '', typedAt = 0;        // card picked with the keyboard, as an index into the cards still in my hand
+  const setHand = up => { handUp = up; if (!up) kb = -1; };
+  let started = false, roundStart = 0, myLit = false;
+  const ctx = { revealed: false, smokeTotal: 180000, waiting: false, roundAge: 0 };
+  const flicks = [];                  // cigarette ends on their way to the ashtray
 
   // my own cards, held in front of the camera
   const handRig = new THREE.Group();
@@ -948,7 +1094,15 @@ export async function createTable3D(opts) {
   const ashtray = makeAshtray();
   ashtray.group.position.set(0, TABLE_Y, 0);
   scene.add(ashtray.group);
-  const wasSmoking = new Set();        // to notice when a smoke break ends and a butt goes in the ashtray
+  const within = (o, root) => { for (let n = o; n; n = n.parent) if (n === root) return true; return false; };
+  function throwButt(from) {
+    if (flicks.length > 12 || document.hidden) { ashtray.addButt(); return; }
+    const mesh = makeButt();
+    mesh.traverse(o => { o.userData.mine = true; });       // never in the way of a click
+    mesh.position.copy(from);
+    scene.add(mesh);
+    flicks.push({ mesh, from: from.clone(), t: 0 });
+  }
 
   function rebuildHand() {
     for (const c of handCards) handRig.remove(c.mesh);
@@ -975,6 +1129,8 @@ export async function createTable3D(opts) {
 
   function update(next) {
     const deckKey = next.cards.join('\n');
+    const reveal = next.revealed && !view.revealed;
+    if (next.round !== view.round || (!next.revealed && view.revealed)) roundStart = time;
     view = next;
     if (deckKey !== handKey) { handKey = deckKey; rebuildHand(); }
     layout();
@@ -992,9 +1148,13 @@ export async function createTable3D(opts) {
         a = buildAvatar(p.avatar, textures);
         a.group.traverse(o => { o.userData.playerId = p.id; });
         a.angle = p.angle;
+        a.voted = p.voted;
         scene.add(a.group);
         avatars.set(p.id, a);
+        if (started && p.online) startAct(a, 'wave', 0.5);          // someone new sits down
       }
+      if (p.voted && !a.voted && !view.revealed) startAct(a, 'play');   // a card goes down
+      a.voted = p.voted;
       a.target = p.angle;
       a.online = p.online;
       a.smokeEnd = p.smokeEnd || 0;
@@ -1028,14 +1188,23 @@ export async function createTable3D(opts) {
       c.order = order;
       order += 1;
     }
-    if (!view.canPlay) handUp = false;
+    if (!view.canPlay) setHand(false);
 
-    const nowMs = Date.now();
-    for (const p of view.players) {
-      const smoking = (p.smokeEnd || 0) > nowMs;
-      if (!smoking && wasSmoking.has(p.id)) ashtray.addButt();
-      if (smoking) wasSmoking.add(p.id); else wasSmoking.delete(p.id);
+    // the cards are turned: everyone who voted reacts to the result
+    if (reveal && started) {
+      const voters = view.players.filter(p => p.voted);
+      const num = p => (p.val == null || p.val === '' ? NaN : Number(p.val));
+      const nums = voters.map(num).filter(Number.isFinite);
+      const lo = Math.min(...nums), hi = Math.max(...nums);
+      const agreed = nums.length >= 2 && nums.length === voters.length && lo === hi;
+      voters.forEach((p, i) => {
+        const a = avatars.get(p.id), n = num(p);
+        if (!a || !a.online) return;
+        const act = agreed ? 'cheer' : nums.length >= 2 && lo !== hi && (n === lo || n === hi) ? 'shrug' : 'nod';
+        startAct(a, act, 1.0 + i * 0.09 + Math.random() * 0.25);
+      });
     }
+    if (view.players.length) started = true;
   }
 
   /* ----- pointer: look around, hover, click ----- */
@@ -1052,6 +1221,10 @@ export async function createTable3D(opts) {
     const others = ray.intersectObjects(scene.children, true);
     for (const h of others) {
       if (h.object.userData.handValue !== undefined || h.object.userData.mine) continue;   // my own hand never blocks the view
+      if (within(h.object, ashtray.group)) {                 // while I smoke, the ashtray is where I put it out
+        if (mySmokeEnd > Date.now()) return { type: 'ashtray' };
+        continue;
+      }
       if (h.object.userData.myCard && view.canPlay) return { type: 'mine' };
       if (h.object.userData.playerId) return { type: 'player', id: h.object.userData.playerId };
       if (h.object.isMesh) break;      // something solid is in the way
@@ -1080,13 +1253,14 @@ export async function createTable3D(opts) {
     onMove(e);
     const hit = pick();
     if (hit && hit.type === 'hand') {
-      if (!handUp) { handUp = true; return; }
+      if (!handUp) { setHand(true); return; }
       const card = topHandCard(hit.hits);
-      if (card) { opts.onVote(card.value); handUp = false; }
+      if (card) { opts.onVote(card.value); setHand(false); }
       return;
     }
-    if (handUp) { handUp = false; return; }
-    if (hit && hit.type === 'mine') { opts.onVote(null); handUp = true; return; }
+    if (handUp) { setHand(false); return; }
+    if (hit && hit.type === 'mine') { opts.onVote(null); setHand(true); return; }
+    if (hit && hit.type === 'ashtray') { if (opts.onStopSmoking) opts.onStopSmoking(); return; }
     if (hit && hit.type === 'player') {
       const a = avatars.get(hit.id);
       const v = new THREE.Vector3(0, a.headY + 0.05, 0).applyMatrix4(a.group.matrixWorld).project(camera);
@@ -1133,7 +1307,11 @@ export async function createTable3D(opts) {
       }
     }
 
-    if (pointerMoved || handUp) { lastHit = pointer ? pick() : null; pointerMoved = false; }
+    if (pointerMoved || handUp) {
+      lastHit = pointer ? pick() : null;
+      if (pointerMoved && lastHit && lastHit.type === 'hand') kb = -1;      // the mouse takes over from the keyboard
+      pointerMoved = false;
+    }
     hover = lastHit ? lastHit.type : null;
 
     // my point of view
@@ -1152,12 +1330,28 @@ export async function createTable3D(opts) {
     }
 
     // other players
+    ctx.revealed = view.revealed; ctx.smokeTotal = smokeTotal;
+    ctx.waiting = !view.revealed && view.players.some(p => p.online && !p.voted);
+    ctx.roundAge = time - roundStart;
     for (const a of avatars.values()) {
       a.angle = lerpAngle(a.angle, a.target, 1 - Math.exp(-6 * dt));
       seatPos(a.angle, seatR, a.group.position);
       a.group.rotation.y = Math.atan2(-a.group.position.x, -a.group.position.z);
-      animateAvatar(a, dt, time, view.revealed, smokeTotal);
+      animateAvatar(a, dt, time, ctx);
+      if (a.pendingFlick) {              // the cigarette end leaves the hand
+        a.pendingFlick = false;
+        throwButt(a.inner.localToWorld(v2.copy(a.arms[1].target).add(v3.set(-0.01, 0.03, 0.03))));
+      }
       if (a.bubble.visible) placeBubble(a, camera);
+    }
+    for (let i = flicks.length - 1; i >= 0; i -= 1) {      // cigarette ends arc into the ashtray
+      const f = flicks[i];
+      f.t += dt / 0.55;
+      const k = Math.min(1, f.t);
+      f.mesh.position.lerpVectors(f.from, v2.set(0, TABLE_Y + 0.02, 0), k);
+      f.mesh.position.y += Math.sin(k * Math.PI) * 0.13;
+      f.mesh.rotation.x += dt * 15; f.mesh.rotation.y += dt * 6;
+      if (k >= 1) { scene.remove(f.mesh); flicks.splice(i, 1); ashtray.addButt(); }
     }
 
     // played cards: dropped face down, then turned up to face you on reveal
@@ -1200,7 +1394,8 @@ export async function createTable3D(opts) {
       const spread = 0.014 + (open - 0.014) * raise;
       handRig.position.set(0, -0.2 + raise * 0.125, -0.52 + raise * 0.08);
       handRig.rotation.x = 1.9 - raise * 2.08;
-      const hot = handUp && lastHit && lastHit.type === 'hand' ? topHandCard(lastHit.hits) : null;
+      if (kb >= n) kb = n - 1;
+      const hot = !handUp ? null : kb >= 0 ? shown[kb] : lastHit && lastHit.type === 'hand' ? topHandCard(lastHit.hits) : null;
       shown.forEach((c, i) => {
         const a = (i - (n - 1) / 2) * spread;
         c.lift = damp(c.lift, c === hot ? 1 : 0, 16, dt);
@@ -1210,8 +1405,13 @@ export async function createTable3D(opts) {
       });
     }
     const myRemaining = mySmokeEnd ? mySmokeEnd - Date.now() : 0;
+    if (myRemaining <= 0 && myLit) {      // my break is over: flick the end into the ashtray
+      myLit = false;
+      throwButt(myCig.group.localToWorld(v2.set(0, 0, 0.03)));
+    }
     myCig.group.visible = myRemaining > 0;
     if (myRemaining > 0) {
+      myLit = true;
       const elapsed = (smokeTotal - myRemaining) / 1000;
       burnCig(myCig, clamp(myRemaining / smokeTotal, 0, 1), elapsed, time, 0.4);
       const up = lightUp(myLighter, elapsed, time);
@@ -1233,6 +1433,7 @@ export async function createTable3D(opts) {
         e.sprite.position.y += Math.sin(k * Math.PI) * 0.3;
         e.sprite.scale.setScalar(0.14 + k * 0.08);
       } else {
+        if (!e.hit) { e.hit = true; startAct(avatars.get(e.to), 'recoil'); }     // it lands: the target flinches
         const k = Math.min(1, (e.t - 1) / 0.9);
         e.sprite.position.copy(end).y += k * 0.16;
         e.sprite.scale.setScalar(0.22 + k * 0.2);
@@ -1242,6 +1443,7 @@ export async function createTable3D(opts) {
     }
 
     canvas.style.cursor = hover ? 'pointer' : 'default';
+    if (canvas.dataset.hover !== (hover || '')) canvas.dataset.hover = hover || '';
     renderer.render(scene, camera);
   }
   requestAnimationFrame(frame);
@@ -1259,8 +1461,40 @@ export async function createTable3D(opts) {
     looks(map) {
       for (const id of Object.keys(map || {})) {
         const a = avatars.get(id), l = map[id];
-        if (a && Array.isArray(l)) a.look = [clamp(Number(l[0]) || 0, -1.3, 1.3), clamp(Number(l[1]) || 0, -0.6, 0.6), l[2] ? 1 : 0];
+        if (a && Array.isArray(l)) { a.look = [clamp(Number(l[0]) || 0, -1.3, 1.3), clamp(Number(l[1]) || 0, -0.6, 0.6), l[2] ? 1 : 0]; a.lookStamp = performance.now(); }
       }
+    },
+    /* Keyboard: 'hand' raises or lowers my cards, 'left'/'right' move along them, 'type' jumps to the card
+       with the typed number, 'play' plays the chosen card, 'down' lowers the hand. True if the key did something. */
+    key(name, arg) {
+      if (!view.canPlay) return false;
+      const shown = handCards.filter(c => c.value !== view.myVote);
+      if (name === 'hand') { setHand(!handUp); return true; }
+      if (name === 'down') { if (!handUp) return false; setHand(false); return true; }
+      if (name === 'left' || name === 'right') {
+        if (!shown.length) return false;
+        if (!handUp || kb < 0) kb = Math.floor((shown.length - 1) / 2);
+        else kb = clamp(kb + (name === 'left' ? -1 : 1), 0, shown.length - 1);
+        handUp = true;
+        return true;
+      }
+      if (name === 'type') {
+        const now = performance.now();
+        typed = now - typedAt < 1200 ? typed + arg : arg;
+        typedAt = now;
+        let i = shown.findIndex(c => c.value === typed);
+        if (i < 0 && typed.length > 1) { typed = arg; i = shown.findIndex(c => c.value === typed); }
+        if (i < 0) return false;
+        handUp = true; kb = i;
+        return true;
+      }
+      if (name === 'play') {
+        if (!handUp || kb < 0 || !shown[kb]) return false;
+        opts.onVote(shown[kb].value);
+        setHand(false);
+        return true;
+      }
+      return false;
     },
     emote(from, to, emoji) {
       if (flying.length > 40 || document.hidden) return;
@@ -1275,7 +1509,7 @@ export async function createTable3D(opts) {
       if (!avatars.has(from)) start.y -= 0.12;
       sprite.position.copy(start);
       scene.add(sprite);
-      flying.push({ sprite, start, t: 0, target: out => headPoint(to, out) });
+      flying.push({ sprite, start, t: 0, to, hit: false, target: out => headPoint(to, out) });
     },
     chat(from, name, text) {          // a speech bubble over the speaker's head
       const a = avatars.get(from);
@@ -1289,6 +1523,7 @@ export async function createTable3D(opts) {
       a.bubble.visible = true;
       a.label.visible = false;
       a.bubbleUntil = performance.now() + Math.min(9000, 3500 + String(text).length * 60);
+      startAct(a, 'talk');
     },
     dispose() {
       disposed = true;
@@ -1330,9 +1565,11 @@ export async function createCastPreview(mount) {
     a.group.rotation.y = (2.5 - col) * 0.05;
     a.label.scale.multiplyScalar(0.45);
     a.smokeEnd = i === 8 || i === 0 ? Date.now() + 180000 - (i === 8 ? 60000 : 0) : 0;      // one lighting up, one mid-cigarette
+    a.idleAt = 1e9;                      // no random habits here: the buttons choose
     scene.add(a.group);
     return a;
   });
+  const ctx = { revealed: false, smokeTotal: 180000, waiting: false, roundAge: 0 };
   const pointer = { x: 0, y: 0 };
   mount.addEventListener('pointermove', e => {
     const r = mount.getBoundingClientRect();
@@ -1358,9 +1595,24 @@ export async function createCastPreview(mount) {
     camera.lookAt(0.2, 1.25, -0.4);
     for (const a of cast) {
       a.look = [-pointer.x * 0.9, -pointer.y * 0.35, Math.sin(time * 0.5 + a.index) > 0.92 ? 1 : 0];
-      animateAvatar(a, dt, time, false, 180000);
+      a.lookStamp = now;
+      animateAvatar(a, dt, time, ctx);
+      a.pendingFlick = false;
     }
     renderer.render(scene, camera);
   };
   requestAnimationFrame(frame);
+  return {
+    names: Object.keys(ACTS).concat('light'),
+    play(name) {
+      cast.forEach((a, i) => {
+        if (name === 'light') { a.smokeEnd = Date.now() + 180000; return; }
+        if (name === 'stub') {
+          if (!a.lit) a.lastLeft = 0.45;
+          a.smokeEnd = 0; a.lit = false;
+        }
+        startAct(a, name, (i % 6) * 0.07);
+      });
+    },
+  };
 }
