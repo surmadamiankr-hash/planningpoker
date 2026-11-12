@@ -89,6 +89,9 @@ let emoteTarget = null, emoteTimer = 0;
 const isHost = () => !!(state && you && state.hostId === you.id);
 const hostPlayer = () => (state ? state.players.find(p => p.id === state.hostId) || null : null);
 const canRun = () => !!state && (!state.hostOnly || isHost());
+// the 3D table (public/table3d.js) is loaded only when someone switches it on
+let view3d = (store.get('pp.view') || (matchMedia('(min-width: 720px)').matches ? '3d' : '2d')) === '3d';
+let scene3d = null, loading3d = false, ws = null, wsTimer = 0;
 const myVote = () => (local.vote !== undefined && state && local.round === state.round ? local.vote : (you ? you.vote : null));
 
 function send(action, quiet) {
@@ -134,6 +137,7 @@ function connect() {
     net = 'live'; everLive = true; retry = 0;
     if (local.vote !== undefined && (local.round !== state.round || you.vote === local.vote)) local.vote = undefined;
     render();
+    if (view3d && scene3d && !ws) connectWs();
   });
   es.addEventListener('emote', e => {
     try { fly(JSON.parse(e.data)); } catch (err) {}
@@ -153,7 +157,7 @@ function seatList() {
   return state.players.map(p => {
     const isMe = p.id === you.id;
     const val = isMe ? (p.spectator ? null : myVote()) : p.vote;
-    return { key: p.id, name: p.name, isMe, spec: p.spectator, online: p.online, smoking: p.smoking === true, host: p.id === state.hostId, val, voted: isMe ? val != null : p.voted };
+    return { key: p.id, name: p.name, isMe, spec: p.spectator, online: p.online, smoking: p.smoking === true, host: p.id === state.hostId, avatar: Number(p.avatar) || 0, val, voted: isMe ? val != null : p.voted };
   });
 }
 
@@ -203,7 +207,17 @@ function render() {
   $('watchers').hidden = !w.length;
   if (w.length) $('watchers').textContent = 'Watching: ' + w.join(', ');
   renderTopic();
-  renderSeats(seats, t);
+  if (view3d && scene3d) {
+    const canPlay = !spec && !state.revealed && seats.some(s => s.isMe && !s.spec);
+    scene3d.update({
+      players: seats.filter(s => !s.spec).map(s => ({
+        id: s.key, name: s.name, avatar: s.avatar, isMe: s.isMe, online: s.online, smoking: s.smoking, host: s.host,
+        voted: s.voted, val: s.isMe || state.revealed ? s.val : null,
+      })),
+      revealed: state.revealed, cards: cards(), myVote: myVote(), canPlay,
+    });
+    $('stage-hint').hidden = true;
+  } else if (!view3d) renderSeats(seats, t);
   renderConsole(seats, t);
   renderTray(t);
   renderStories();
@@ -219,7 +233,8 @@ function render() {
   $('host-claim').hidden = hostPlayer() !== null;
   const mine = seats.find(s => s.isMe);
   $('smoke').setAttribute('aria-pressed', String(!!(mine && mine.smoking)));
-  if (emoteTarget && !seatEls.has(emoteTarget)) closeEmotes();
+  if (emoteTarget && !state.players.some(p => p.id === emoteTarget && !p.spectator)) closeEmotes();
+  if ($('view3d').checked !== view3d) $('view3d').checked = view3d;
 }
 
 function renderTopic() {
@@ -336,6 +351,13 @@ function joinNames(list) {
 }
 function renderTray(t) {
   const tray = $('tray');
+  if (!state.revealed && !spec && view3d && scene3d) {
+    if (traySig !== 'hand3d') {
+      traySig = 'hand3d';
+      tray.replaceChildren(el('p', 'tray-note', 'Move the mouse over the table to look around. Your cards are face down in your hands: click them to look, click a card to play it, and click your played card on the table to take it back.'));
+    }
+    return;
+  }
   if (!state.revealed && !spec) {
     const sig = 'hand|' + state.deck;
     if (sig !== traySig) {
@@ -442,21 +464,23 @@ function closeEmotes() {
   emoteTarget = null;
   $('emotes').hidden = true;
 }
-function openEmotes(id, viaKeyboard) {
+function openEmotes(id, viaKeyboard, point) {
   const seat = seatEls.get(id), who = state && state.players.find(p => p.id === id);
-  if (!seat || !who) return;
-  const pop = $('emotes'), table = $('table');
+  if (!who || (!seat && !point)) return;
+  const pop = $('emotes'), table = pop.parentElement;
   emoteTarget = id;
   pop.hidden = false;
   pop.setAttribute('aria-label', 'Send ' + who.name + ' a reaction');
   const pass = pop.querySelector('.emotes-host');
   if (pass) pass.hidden = !isHost();
   // float just above the whole seat so the name stays readable; drop below it only when there is no room
-  const t = table.getBoundingClientRect(), c = seat.root.getBoundingClientRect(), p = pop.getBoundingClientRect();
+  const t = table.getBoundingClientRect(), p = pop.getBoundingClientRect();
+  // in 3D the anchor is the point on screen above the character's head; in 2D it is the seat
+  const c = point ? { left: t.left + point.x, top: t.top + point.y, bottom: t.top + point.y + 70, width: 0 } : seat.root.getBoundingClientRect();
   let left = c.left - t.left + c.width / 2 - p.width / 2;
   left = Math.max(8, Math.min(left, t.width - p.width - 8));
   let top = c.top - t.top - p.height - 6;
-  if (top < -24) top = c.bottom - t.top + 6;
+  if (top < (point ? 6 : -24)) top = c.bottom - t.top + 6;
   pop.style.left = Math.round(left) + 'px';
   pop.style.top = Math.round(top) + 'px';
   if (viaKeyboard && pop.firstElementChild) pop.firstElementChild.focus();
@@ -465,6 +489,7 @@ function openEmotes(id, viaKeyboard) {
 }
 function fly(d) {
   if (document.hidden || !state || typeof d.emote !== 'string') return;
+  if (view3d) { if (scene3d) scene3d.emote(d.from, d.to, d.emote.slice(0, 8)); return; }
   const table = $('table'), to = seatEls.get(d.to);
   if (!to || table.querySelectorAll('.fly').length > 40) return;
   const base = table.getBoundingClientRect();
@@ -494,6 +519,74 @@ function fly(d) {
     flight.onfinish = land;
   }
   setTimeout(() => node.remove(), 4000);
+}
+
+/* ---------- 3D table ---------- */
+function castVote(value) {
+  if (!state || state.revealed || spec) return;
+  local.vote = value; local.round = state.round;
+  render();
+  send({ type: 'vote', value, round: state.round }).then(ok => { if (!ok) { local.vote = undefined; render(); } });
+}
+function sendLook(yaw, pitch, hand) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'look', y: Math.round(yaw * 100) / 100, p: Math.round(pitch * 100) / 100, h: hand }));
+}
+function connectWs() {            // head movement travels over its own WebSocket; the table works without it
+  clearTimeout(wsTimer);
+  if (!view3d || !scene3d || ws) return;
+  let url;
+  try { url = new URL(api('ws') + '?token=' + encodeURIComponent(token), location.href); } catch (e) { return; }
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let sock;
+  try { sock = new WebSocket(url); } catch (e) { return; }
+  ws = sock;
+  sock.onmessage = e => {
+    try { const m = JSON.parse(e.data); if (m.t === 'looks' && scene3d) scene3d.looks(m.l); } catch (err) {}
+  };
+  sock.onclose = () => {
+    if (ws === sock) ws = null;
+    if (view3d && scene3d) wsTimer = setTimeout(connectWs, 2500);
+  };
+  sock.onerror = () => {};
+}
+function applyView() {
+  $('stage').hidden = !view3d;
+  $('table').hidden = view3d;
+  const consoleHome = view3d ? $('stage-hud') : $('seats');
+  if ($('console').parentElement !== consoleHome) consoleHome.append($('console'));
+  const pickerHome = view3d ? $('stage') : $('table');
+  if ($('emotes').parentElement !== pickerHome) pickerHome.append($('emotes'));
+  $('view3d').checked = view3d;
+  traySig = '';
+  consoleSig = '';
+}
+async function start3d() {
+  if (scene3d || loading3d) return;
+  loading3d = true;
+  $('stage-hint').hidden = false;
+  $('stage-hint').textContent = 'Setting up the 3D table';
+  try {
+    const mod = await import('./table3d.js');
+    scene3d = await mod.createTable3D({
+      mount: $('stage'), onVote: castVote, onLook: sendLook, onMiss: closeEmotes,
+      onPlayer: (id, point) => { if (emoteTarget === id) closeEmotes(); else openEmotes(id, false, point); },
+      onSlow: () => toast('The 3D table is running slowly on this device. Switch off "3D table" for the 2D view.'),
+    });
+  } catch (e) {
+    view3d = false;
+    store.set('pp.view', '2d');
+    toast('The 3D table is not available in this browser, so you are on the 2D table.');
+  }
+  loading3d = false;
+  if (!view3d) stop3d();              // switched off (or failed) while loading
+  applyView();
+  render();
+  connectWs();
+}
+function stop3d() {
+  clearTimeout(wsTimer);
+  if (ws) { const sock = ws; ws = null; sock.close(); }
+  if (scene3d) { scene3d.dispose(); scene3d = null; }
 }
 
 /* ---------- custom deck ---------- */
@@ -560,6 +653,16 @@ function bind() {
     if (ok) closeDeckEditor();
   });
 
+  $('view3d').addEventListener('change', e => {
+    view3d = e.target.checked;
+    store.set('pp.view', view3d ? '3d' : '2d');
+    closeEmotes();
+    if (!view3d) stop3d();
+    applyView();
+    render();
+    if (view3d) start3d();
+  });
+
   $('host-only').addEventListener('change', e => { send({ type: 'host.only', on: e.target.checked }); });
   $('host-claim').addEventListener('click', () => { send({ type: 'host.claim' }); });
 
@@ -591,7 +694,8 @@ function bind() {
     emoteTimer = setTimeout(closeEmotes, 6000);
   });
   document.addEventListener('click', e => {
-    if (emoteTarget && !e.target.closest('#emotes') && !e.target.closest('.seat.is-other')) closeEmotes();
+    // clicks on the 3D canvas are handled by the scene, which reports a miss itself
+    if (emoteTarget && !e.target.closest('#emotes') && !e.target.closest('.seat.is-other') && !e.target.closest('.stage-canvas')) closeEmotes();
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && emoteTarget) closeEmotes(); });
 
@@ -603,7 +707,7 @@ function bind() {
   topic.addEventListener('input', () => { clearTimeout(topicTimer); topicTimer = setTimeout(sendTopic, 500); });
   topic.addEventListener('blur', () => { clearTimeout(topicTimer); sendTopic(); });
 
-  $('table').addEventListener('click', e => {
+  $('console').addEventListener('click', e => {       // the console moves between the 2D table and the 3D stage
     const b = e.target.closest('[data-act]');
     if (!b || b.disabled || !state) return;
     send({ type: b.dataset.act, round: state.round });
@@ -612,14 +716,7 @@ function bind() {
   $('tray').addEventListener('click', e => {
     if (!state) return;
     const c = e.target.closest('.hcard');
-    if (c) {
-      if (state.revealed || spec) return;
-      const value = myVote() === c.dataset.card ? null : c.dataset.card;
-      local.vote = value; local.round = state.round;
-      render();
-      send({ type: 'vote', value, round: state.round }).then(ok => { if (!ok) { local.vote = undefined; render(); } });
-      return;
-    }
+    if (c) { castVote(myVote() === c.dataset.card ? null : c.dataset.card); return; }
     const b = e.target.closest('[data-act="save"]');
     if (b && state.storyId) {
       const s = state.stories.find(x => x.id === state.storyId);
@@ -667,8 +764,11 @@ function seat() {
   $('controls').hidden = false;
   $('layout').hidden = false;
   $('foot').hidden = false;
+  $('credit').hidden = false;
   bind();
+  applyView();
   connect();
+  if (view3d) start3d();
 }
 
 if (name) seat();

@@ -27,6 +27,7 @@
         <p class="landing-hint">A name gives you a link the team can reuse every sprint. Leave it empty for a one-off table.</p>
       </div>
     </div>
+    <p class="credit">Made by Damian Surma. Inspired by Boguś.</p>
   </section>
 
   <!-- A table: shown when the address has ?room=name -->
@@ -43,6 +44,7 @@
           <div class="deck-row"><select id="deck"></select><button class="link" type="button" id="deck-edit" hidden>Edit</button></div>
         </div>
         <label class="switch"><input id="spec" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Just watching</span></label>
+        <label class="switch"><input id="view3d" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>3D table</span></label>
         <label class="switch" id="host-only-wrap" hidden><input id="host-only" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Only I reveal</span></label>
         <button class="btn btn-plain" type="button" id="host-claim" hidden>Become host</button>
         <button class="btn btn-plain btn-icon" type="button" id="smoke" aria-pressed="false">
@@ -83,6 +85,11 @@
           </div>
         </div>
 
+        <div class="stage" id="stage" hidden>
+          <div class="stage-hud" id="stage-hud"></div>
+          <p class="stage-hint" id="stage-hint" hidden></p>
+        </div>
+
         <div class="table" id="table">
           <div class="seats" id="seats">
             <div class="console" id="console" aria-live="polite"><p class="console-msg">Connecting to the table</p></div>
@@ -116,6 +123,7 @@
     </main>
 
     <p class="foot" id="foot" hidden>Everyone with this link is seated at the table. Votes stay on the server until the cards are revealed, so nobody can peek. The first person at a table is its host. Click a teammate's card to send them a reaction.</p>
+    <p class="credit" id="credit" hidden>Made by Damian Surma. Inspired by Boguś.</p>
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>

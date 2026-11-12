@@ -3,15 +3,17 @@
 
 /*
  * Planning Poker - self-hosted server.
- * No dependencies: Node's http module, server-sent events for live updates,
- * JSON POSTs for actions. One process holds every table in memory; story
- * lists are also written to DATA_DIR/rooms.json so they survive a restart.
+ * Node's http module, server-sent events for the table state, JSON POSTs for
+ * actions, and one WebSocket per 3D viewer for head movement (the only
+ * dependency, `ws`). One process holds every table in memory; story lists are
+ * also written to DATA_DIR/rooms.json so they survive a restart.
  */
 
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -22,11 +24,13 @@ const STALE_MS = 90000;                                      // no ping for this
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const DECKS = {
+  bt:    { label: 'BT DECK',            cards: ['1', '2', '3', '4', '6', '8', '10', '12', '14', '16', '18', '20', '24', '30', '36', '40'] },
   fib:   { label: 'Fibonacci',          cards: ['0', '1', '2', '3', '5', '8', '13', '21', '34', '55', '89', '?', 'coffee'] },
   mod:   { label: 'Modified Fibonacci', cards: ['0', '½', '1', '2', '3', '5', '8', '13', '20', '40', '100', '?', 'coffee'] },
   shirt: { label: 'T-shirt sizes',      cards: ['XS', 'S', 'M', 'L', 'XL', 'XXL', '?', 'coffee'] },
   pow2:  { label: 'Powers of 2',        cards: ['0', '1', '2', '4', '8', '16', '32', '64', '?', 'coffee'] },
 };
+const CAST_SIZE = 12;                                        // characters in the 3D cast (public/table3d.js)
 const EMOTES = ['❤️', '👍', '👏', '😂', '🎉', '🤔', '😮', '🔥'];
 const MAX = { rooms: 2000, players: 60, stories: 300, name: 24, title: 160, body: 32 * 1024, addAtOnce: 60, customCards: 20, cardLength: 4 };
 const ROOM_RE = /^[a-z0-9][a-z0-9-]{1,39}$/;
@@ -76,7 +80,7 @@ function publicState(room) {
     title: room.title, storyId: room.storyId, stories: room.stories,
     hostId: room.hostId, hostOnly: room.hostOnly,
     players: [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, spectator: p.spectator, online: p.conns.size > 0, smoking: p.smoking,
+      id: p.id, name: p.name, spectator: p.spectator, online: p.conns.size > 0, smoking: p.smoking, avatar: p.avatar,
       voted: p.vote !== null,
       vote: room.revealed ? p.vote : null,          // a vote never leaves the server before the reveal
     })),
@@ -99,6 +103,14 @@ function queueBroadcast(room) {
   if (room.queued) return;
   room.queued = true;
   setImmediate(() => { room.queued = false; broadcast(room); });
+}
+
+/** A random character nobody at the table is using yet (any one once all are taken). */
+function pickAvatar(room) {
+  const used = new Set([...room.players.values()].map(p => p.avatar));
+  const free = [];
+  for (let i = 0; i < CAST_SIZE; i += 1) if (!used.has(i)) free.push(i);
+  return free.length ? free[crypto.randomInt(free.length)] : crypto.randomInt(CAST_SIZE);
 }
 
 function newRound(room) {
@@ -283,7 +295,7 @@ function load() {
 
 /* ---------- http ---------- */
 const SECURITY = {
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
 };
@@ -308,7 +320,7 @@ function serveStatic(req, res, p) {
     res.writeHead(200, {
       ...SECURITY,
       'Content-Type': TYPES[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.woff2' ? 'public, max-age=2592000' : 'no-cache',
+      'Cache-Control': ext === '.woff2' || p.startsWith('/vendor/') ? 'public, max-age=2592000' : 'no-cache',
       'Content-Length': buf.length,
     });
     res.end(req.method === 'HEAD' ? undefined : buf);
@@ -320,6 +332,7 @@ function leave(room, p) {
   p.goneTimer = setTimeout(() => {
     if (p.conns.size || room.players.get(p.id) !== p) return;
     room.players.delete(p.id);
+    for (const ws of p.sockets) ws.close();
     queueBroadcast(room);
   }, GRACE_MS);
   queueBroadcast(room);
@@ -334,7 +347,12 @@ function handleEvents(req, res, roomId, query) {
   let p = room.players.get(id);
   if (!p) {
     if (room.players.size >= MAX.players) return reply(res, 429, 'Table is full');
-    p = { id, name: clean(query.get('name'), MAX.name) || 'Guest', spectator: query.get('spec') === '1', vote: null, smoking: false, emoted: 0, conns: new Set(), seen: Date.now(), goneTimer: null };
+    p = {
+      id, name: clean(query.get('name'), MAX.name) || 'Guest', spectator: query.get('spec') === '1',
+      vote: null, smoking: false, emoted: 0, avatar: pickAvatar(room),
+      look: [0, 0, 0], lookDirty: false, sockets: new Set(),   // head yaw, head pitch, cards raised (3D view)
+      conns: new Set(), seen: Date.now(), goneTimer: null,
+    };
     room.players.set(id, p);
     if (!room.hostId) room.hostId = id;            // first to sit down hosts the table
   }
@@ -409,6 +427,61 @@ const server = http.createServer((req, res) => {
   reply(res, 405, 'Method not allowed');
 });
 
+/* ---------- head movement (3D view) ---------- */
+// Each 3D viewer keeps one WebSocket open and reports where they are looking.
+// Looks are relayed to the table ten times a second, only when they changed.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 512 });
+const clamp = (v, lo, hi) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : 0);
+
+server.on('upgrade', (req, socket, head) => {
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch (e) { socket.destroy(); return; }
+  let p = url.pathname;
+  if (BASE_PATH && p.startsWith(BASE_PATH + '/')) p = p.slice(BASE_PATH.length);
+  const m = /^\/api\/rooms\/([^/]+)\/ws$/.exec(p);
+  const token = url.searchParams.get('token') || '';
+  const room = m && ROOM_RE.test(m[1]) ? getRoom(m[1], false) : null;
+  const player = room && TOKEN_RE.test(token) ? room.players.get(playerId(token)) : null;
+  if (!player || player.sockets.size >= 8) {     // not seated (yet): the page retries after its table stream is up
+    socket.write('HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, ws => {
+    player.sockets.add(ws);
+    let budget = 30, windowStart = Date.now();
+    const known = {};
+    for (const other of room.players.values()) if (other !== player) known[other.id] = other.look;
+    ws.send(JSON.stringify({ t: 'looks', l: known }));
+    ws.on('message', data => {
+      const now = Date.now();
+      if (now - windowStart > 1000) { windowStart = now; budget = 30; }
+      if ((budget -= 1) < 0) return;
+      let msg;
+      try { msg = JSON.parse(data.toString('utf8')); } catch (e) { return; }
+      if (!msg || msg.t !== 'look') return;
+      player.look = [clamp(Number(msg.y), -1.6, 1.6), clamp(Number(msg.p), -0.9, 0.9), msg.h ? 1 : 0];
+      player.lookDirty = true;
+      room.looksDirty = true;
+      player.seen = now;
+    });
+    ws.on('close', () => { player.sockets.delete(ws); });
+    ws.on('error', () => {});
+  });
+});
+
+const looksTick = setInterval(() => {
+  for (const room of rooms.values()) {
+    if (!room.looksDirty) continue;
+    room.looksDirty = false;
+    const changed = {};
+    for (const p of room.players.values()) if (p.lookDirty) { p.lookDirty = false; changed[p.id] = p.look; }
+    const msg = JSON.stringify({ t: 'looks', l: changed });
+    for (const p of room.players.values()) for (const ws of p.sockets) if (ws.readyState === 1) ws.send(msg);
+  }
+}, 100);
+looksTick.unref();
+
 /* ---------- housekeeping ---------- */
 const sweep = setInterval(() => {
   const now = Date.now();
@@ -418,6 +491,7 @@ const sweep = setInterval(() => {
         for (const res of [...p.conns]) res.destroy();      // fires 'close', which starts the seat's grace period
       } else {
         for (const res of p.conns) res.write(': keep-alive\n\n');
+        for (const ws of p.sockets) if (ws.readyState === 1) ws.ping();
       }
     }
     if (!room.players.size) {

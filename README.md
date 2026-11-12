@@ -1,13 +1,16 @@
 # Planning Poker (self-hosted)
 
 Open a table, send the link to your team, vote face down, reveal together.
-No accounts, no database, no npm dependencies, no requests to outside services.
+No accounts, no database, no requests to outside services.
+
+Made by Damian Surma. Inspired by Boguś.
 
 ## Run it
 
 Needs Node 18 or newer.
 
 ```
+npm install
 node server.js
 ```
 
@@ -22,10 +25,17 @@ docker compose up -d --build
 
 ## How it works
 
-- `server.js` is the whole backend: plain Node `http`, no packages to install.
-- Live updates use server-sent events (one long-lived GET per browser tab);
-  actions are small JSON POSTs. Both are ordinary HTTP, so no WebSocket
-  upgrade rules are needed on a proxy.
+- `server.js` is the whole backend: plain Node `http` plus one package, `ws`.
+- The table state travels over server-sent events (one long-lived GET per
+  browser tab) and actions are small JSON POSTs. The 3D view also opens a
+  WebSocket that carries head movement, ten updates a second at most. If the
+  WebSocket cannot connect, everything still works; heads just stay still.
+- 3D table: each person sits in their own seat and sees the table from there.
+  Moving the mouse turns your head, and the others see it. Your cards are
+  face down in your hands: click them to look, click one to play it. The
+  server gives every player a random character from a cast of twelve.
+  The "3D table" switch in the header goes back to the flat 2D table.
+  three.js is bundled in `public/vendor/`, so nothing is loaded from a CDN.
 - A table is created the first time someone opens its link:
   `https://your-host/?room=delivery-team`. Anyone with the link can join,
   vote and edit the story list.
@@ -34,7 +44,7 @@ docker compose up -d --build
   deck. The host can switch off "Only I reveal" to let everyone do it, or
   hand the role over by clicking a teammate's card and choosing "Make host".
   If the host leaves, anyone can press "Become host".
-- Decks: four built-in ones (the `DECKS` constant at the top of `server.js`)
+- Decks: five built-in ones, including BT DECK (the `DECKS` constant at the top of `server.js`)
   plus "Custom deck" in the page, where the host types the values for that
   table. Whole numbers, decimals with a dot and `½` count towards the average.
 - Reactions: click a teammate's card to send them an emoji that everyone sees
@@ -67,10 +77,13 @@ The live stream must not be buffered and must be allowed to stay open.
 nginx:
 
 ```
+map $http_upgrade $connection_upgrade { default upgrade; '' ''; }
+
 location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
-    proxy_set_header Connection "";
+    proxy_set_header Upgrade $http_upgrade;          # WebSocket for 3D head movement
+    proxy_set_header Connection $connection_upgrade;
     proxy_set_header Host $host;
     proxy_buffering off;
     proxy_read_timeout 1h;
@@ -100,8 +113,10 @@ and each open tab of the app uses one.
 ```
 server.js            backend
 public/index.html    page
-public/app.js        browser code
+public/app.js        browser code (2D table, controls)
+public/table3d.js    the 3D table and its characters
 public/style.css     styles
+public/vendor/       three.js (MIT license, text included)
 public/fonts/        League Gothic and Instrument Sans (SIL Open Font License, texts included)
 Dockerfile, docker-compose.yml
 ```

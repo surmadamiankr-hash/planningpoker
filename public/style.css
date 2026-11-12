@@ -105,6 +105,16 @@ h1 a { color: inherit; text-decoration: none; }
 .topic-title { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
 .topic-tag { font-size: 13px; color: var(--muted); white-space: nowrap; }
 
+/* ---- the 3D table ---- */
+.stage { position: relative; overflow: hidden; border-radius: 28px; background: #0B1310; color: var(--felt-ink); aspect-ratio: 16 / 10; min-height: 380px; max-height: 76vh; width: 100%; box-shadow: 0 22px 40px -26px rgba(8, 28, 22, 0.7); }
+.stage-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; }
+.stage :focus-visible { outline-color: var(--gold); }
+.stage-hud { position: absolute; top: 12px; left: 12px; z-index: 2; width: max-content; max-width: min(250px, calc(100% - 24px)); }
+.stage-hud .console { min-height: 0; padding: 10px 16px; gap: 8px; border-radius: 16px; background: rgba(8, 16, 13, 0.62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.stage-hud .headline-v { font-size: 54px; }
+.stage-hud .headline-v svg { width: 44px; }
+.stage-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 2; margin: 0; padding: 5px 12px; border-radius: 999px; background: rgba(8, 16, 13, 0.62); font-size: 13px; pointer-events: none; max-width: calc(100% - 24px); text-align: center; }
+
 /* ---- the table ---- */
 .table {
   position: relative;
@@ -247,6 +257,8 @@ h1 a { color: inherit; text-decoration: none; }
 .copy-out { width: 100%; min-height: 110px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 
 .foot { margin: 0; font-size: 13px; color: var(--muted); max-width: 75ch; }
+.credit { margin: 0; font-size: 13px; color: var(--muted); }
+.landing .credit { margin-top: 18px; text-align: center; }
 
 /* ---- take a seat ---- */
 .join { max-width: 440px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: grid; gap: 10px; }
